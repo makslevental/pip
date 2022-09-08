@@ -2,3 +2,5 @@ sympy
 scipy
 ipython
 jupyter
+islpy
+matplotlib

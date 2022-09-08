@@ -1,6 +1,8 @@
 import itertools as it
 import re
 import sys
+from collections import defaultdict
+from contextlib import suppress
 from functools import reduce
 from pprint import pprint
 
@@ -87,21 +89,46 @@ def sweep(tab, pivot):
 
 def find_pivot(tab, m=None):
     tab, m = _normalize_tableau(tab, m)
-    # if we were doing max we would need all these to be negative
-    assert all(b >= 0 for b in tab[:m, -1])
-    # find smallest cost
+    # if any of the right hand sides are negative then
+    #
+    poses = [a >= 0 for a in tab[:m, -1] if not a.atoms(Symbol)]
+    assert not poses or all(b >= 0 for b in tab[:m, -1])
     if tab[-1, :-1].atoms(Symbol):
         idx_sym_exprs = {(j, e) for j, e in enumerate(tab[-1, :-1]) if e.atoms(Symbol)}
         # smarter way to pick entering variable is probably in terms of what's already been explored
         j = np.random.choice([j for j, e in idx_sym_exprs], 1)[0]
     else:
+        # -z + (-1)*x0 + 4*x1 = 0
+        # -z - 1*x0 + 4*x1 = 0
+        # -z = 1*x0 - 4*x1
+        # z = -1*x0 + 4*x1
+        # the largest negative coefficient pushes z down the most
         j = np.argmin(tab[-1, :-1])
         if tab[-1, j] >= 0:
+            # if all coefficients are positive then objective is minimum
+            # e.g. cf. above
+            # -z + 10*x0 + 4*x1 = 0
+            # z = 10*x0 + 4*x1
+            # and z is most negative at the mins of the domains of x1, x2
             return  # success
-        if all(a <= 0 for a in tab[:m, j]):
-            raise UnboundedProblem
-        # find smallest ratio
-    i = np.argmin([b / a if a > 0 else sp.oo for b, a in zip(tab[:m, -1], tab[:m, j])])
+    negs = [a < 0 for a in tab[:m, j] if not a.atoms(Symbol)]
+    if negs and all(negs):
+        raise UnboundedProblem
+    # find in order to not violate other constraints;
+    # 1*x1 + 1*x2 <= 12
+    # 2*x1 + 1*x2 <= 16
+    # if x1 is the pivot column then we cannot choose row 1 as the pivot row
+    # if row 1 is the pivot column then we will produce
+    # then the implied upper bound for x1 is 12 (1*x1 + 0*x2 <= 12)
+    # but then the second constraint would be violated (2*12 + 0*x2 !<= 16)
+    idx_sym_exprs = {(j, e) for j, e in enumerate(tab[:m, j]) if e.atoms(Symbol)}
+    idx_consts = {(j, e) for j, e in enumerate(tab[:m, j]) if not e.atoms(Symbol)}
+    if len(idx_consts):
+        i = min([(tab[j, -1] / a, j) if a > 0 else (sp.oo, j) for j, a in idx_consts])
+        i = i[1]
+    else:
+        assert idx_sym_exprs
+        i = np.random.choice([j for j, e in idx_sym_exprs], 1)[0]
     return i, j
 
 
@@ -261,14 +288,13 @@ def disp_tableau(tab, m=None):
     disp_math("", tab)
 
 
-PARAMETER_DOMAIN_OBJECTIVE_VAL_MAP = {}
-
-
 def handle_parameterized_objective(tab):
     tab, m = _normalize_tableau(tab)
     objective_row = tab[-1, :-1]
     objective_val = tab[-1, -1]
     syms = tab[-1, :-1].atoms(Symbol)
+    if not syms:
+        return
     assert len(syms) == 1, "only handle one sym for right now"
     sym = syms.pop()
     row_set = {(j, e) for j, e in enumerate(objective_row)}
@@ -279,7 +305,8 @@ def handle_parameterized_objective(tab):
         for j, expr in idx_sym_exprs:
             _sol = solve_univariate_inequality(expr >= 0, sym, relational=False)
             col = tab[:m, j]
-            if all(c < 0 for c in col.values()):
+            negs = [c < 0 for c in col if not c.atoms(Symbol)]
+            if negs and all(negs):
                 PARAMETER_DOMAIN_OBJECTIVE_VAL_MAP[
                     Interval(-sp.oo, sp.oo) - _sol
                 ] = -sp.oo
@@ -288,17 +315,49 @@ def handle_parameterized_objective(tab):
             else:
                 sol &= _sol
         sol = sol.simplify()
-        PARAMETER_DOMAIN_OBJECTIVE_VAL_MAP[sol] = objective_val
+        if sol != sp.EmptySet:
+            PARAMETER_DOMAIN_OBJECTIVE_VAL_MAP[sol] = objective_val
 
 
 def print_param_sol_dict():
-    for inter, val in PARAMETER_DOMAIN_OBJECTIVE_VAL_MAP.items():
-        sym_pprint({"interval": inter, "soln": val})
+    collected_intervals = []
+    for inter, fn in sorted(
+        PARAMETER_DOMAIN_OBJECTIVE_VAL_MAP.items(),
+        key=lambda inter_fn: inter_fn[0].right,
+    ):
+        if collected_intervals:
+            prev_inter, prev_fn = collected_intervals[-1]
+            if (
+                inter.intersection(prev_inter) == inter
+                or prev_inter.intersection(inter) == prev_inter
+            ):
+                assert fn == prev_fn
+                collected_intervals.pop()
+                inter = prev_inter.union(inter)
+
+        collected_intervals.append((inter, fn))
+
+    for inter, fn in collected_intervals:
+        sym_pprint({"interval": inter, "soln": fn})
     print()
 
 
-if __name__ == "__main__":
-    tableau0 = linprog(
+def check_param_coverage():
+    intervals = list(PARAMETER_DOMAIN_OBJECTIVE_VAL_MAP.keys())
+
+    return intervals and reduce(
+        lambda acc, val: acc.union(val), intervals[1:], intervals[0]
+    ) == Interval(-sp.oo, sp.oo)
+
+
+PARAMETER_DOMAIN_OBJECTIVE_VAL_MAP = {}
+
+
+def test_single_symbol_objective():
+    global PARAMETER_DOMAIN_OBJECTIVE_VAL_MAP
+    PARAMETER_DOMAIN_OBJECTIVE_VAL_MAP = {}
+
+    tableau = linprog(
         minimize=[-3 + 2 * sp.var("θ"), 3 - sp.var("θ"), 1],
         subject_to=[
             ([1, 2, -3], "<=", 5),
@@ -309,16 +368,66 @@ if __name__ == "__main__":
         ],
     )
 
-    disp_tableau(tableau0)
-    handle_parameterized_objective(tableau0)
+    tableau_stack = [tableau.copy()]
+
+    while not check_param_coverage():
+        tableau = tableau_stack[-1]
+        disp_tableau(tableau)
+        # sym_pprint(tableau)
+        handle_parameterized_objective(tableau)
+        try:
+            pivot = find_pivot(tableau)
+            tableau = sweep(tableau, pivot)
+            tableau_stack.append(tableau.copy())
+        except UnboundedProblem:
+            continue
+
+    assert check_param_coverage(), print_param_sol_dict()
     print_param_sol_dict()
 
-    tableau1 = sweep(tableau0.copy(), (0, 1))
-    disp_tableau(tableau1)
-    handle_parameterized_objective(tableau1)
+
+def test_single_symbol_constraints():
+    global PARAMETER_DOMAIN_OBJECTIVE_VAL_MAP
+    PARAMETER_DOMAIN_OBJECTIVE_VAL_MAP = {}
+
+    tableau = linprog(
+        minimize=[-3, 3, 1],
+        subject_to=[
+            ([1, 2 * sp.var("θ"), -3], "<=", 5),
+            ([2, 1, -4 + sp.var("θ")], "<=", 7),
+            # ([1, 0, 0], ">=", 0),
+            # ([0, 1, 0], ">=", 0),
+            # ([0, 0, 1], ">=", 0),
+        ],
+    )
+
+    tableau_stack = [tableau.copy()]
+
+    while not check_param_coverage():
+        tableau = tableau_stack[-1]
+        disp_tableau(tableau)
+        sym_pprint(tableau)
+        handle_parameterized_objective(tableau)
+        try:
+            pivot = find_pivot(tableau)
+            tableau = sweep(tableau, pivot)
+            tableau_stack.append(tableau.copy())
+        except UnboundedProblem:
+            continue
+
+    assert check_param_coverage(), print_param_sol_dict()
     print_param_sol_dict()
 
-    tableau2 = sweep(tableau0.copy(), (1, 0))
-    disp_tableau(tableau2)
-    handle_parameterized_objective(tableau2)
-    print_param_sol_dict()
+
+if __name__ == "__main__":
+    test_single_symbol_objective()
+    # test_single_symbol_constraints()
+
+# b = {"c": "d", "d": 3}
+# with suppress(Exception, SyntaxError):
+#     (
+#         c := b["c"],
+#         d := b[c],
+#     )
+# print(c)
+# print(d)
