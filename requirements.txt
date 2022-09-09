@@ -4,3 +4,5 @@ ipython
 jupyter
 islpy
 matplotlib
+mystic
+diofant
