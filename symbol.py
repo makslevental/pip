@@ -1,5 +1,4 @@
 import dataclasses
-import sys
 from dataclasses import dataclass, field
 from functools import reduce
 from pprint import pformat
@@ -20,7 +19,6 @@ from sympy import (
 from sympy.parsing.sympy_parser import standard_transformations, convert_equals_signs
 from sympy.solvers.solveset import linear_coeffs
 
-from inequalities import _pivot
 from simplex import (
     linprog,
     disp_tableau,
@@ -31,6 +29,20 @@ from simplex import (
 )
 
 EPS = 1
+
+
+def lcm_tableau(tableau):
+    lcm = set()
+    for el in tableau:
+        if el.free_symbols:
+            print()
+        coeffs = list(el.simplify().as_coefficients_dict().values())
+        for c in coeffs:
+            if c.is_Rational and -1 < c < 1 and c != 0:
+                lcm.add(c)
+    if lcm:
+        tableau *= np.lcm.reduce(list(c.denominator for c in lcm))
+    return tableau
 
 
 def get_var_coeffs(eqn, vars):
@@ -69,7 +81,7 @@ def make_constraints_from_eqns(eqns, domain_vars, range_var, use_symbols):
 
 
 def build_tableau_from_eqns(
-    eqns_str, domain_vars, range_var, symbol_vars, minimize=True, use_symbols=False
+        eqns_str, domain_vars, range_var, symbol_vars, minimize=True, use_symbols=False
 ):
     domain_vars = {d: sp.Symbol(d, real=True) for d in sorted(domain_vars)}
     range_var = {range_var: sp.Symbol(range_var, real=True)}
@@ -236,7 +248,7 @@ def handle_parameterized_objective(tab):
             if negs and all(negs):
                 PARAMETER_DOMAIN_OBJECTIVE_VAL_MAP[
                     Interval(-sp.oo, sp.oo) - _sol
-                ] = -sp.oo
+                    ] = -sp.oo
             if sol is None:
                 sol = _sol
             else:
@@ -249,14 +261,14 @@ def handle_parameterized_objective(tab):
 def print_param_sol_dict():
     collected_intervals = []
     for inter, fn in sorted(
-        PARAMETER_DOMAIN_OBJECTIVE_VAL_MAP.items(),
-        key=lambda inter_fn: inter_fn[0].right,
+            PARAMETER_DOMAIN_OBJECTIVE_VAL_MAP.items(),
+            key=lambda inter_fn: inter_fn[0].right,
     ):
         if collected_intervals:
             prev_inter, prev_fn = collected_intervals[-1]
             if (
-                inter.intersection(prev_inter) == inter
-                or prev_inter.intersection(inter) == prev_inter
+                    inter.intersection(prev_inter) == inter
+                    or prev_inter.intersection(inter) == prev_inter
             ):
                 assert fn == prev_fn
                 collected_intervals.pop()
@@ -324,7 +336,7 @@ def get_symbol_exprs_in_objective(tab):
 
 
 def linear_ineq_to_matrix(inequalities, symbols):
-    inequalities = sp.sympify(inequalities)
+    inequalities = list(sp.sympify(inequalities))
     for i, ineq in enumerate(inequalities):
         inequalities[i] = ineq.func(ineq.lhs.as_expr() - ineq.rhs.as_expr(), 0)
 
@@ -454,33 +466,35 @@ class SymbolicTableau:
 
     def _check_branch_lt(self, expr):
         assert expr.free_symbols <= self.sym_vars
-        constraints = set(sp.simplify(self.neg_constraints)) | {expr <= -EPS}
-        if check_constraints_feasible(list(constraints), list(self.sym_vars)):
+        constraints = set(sp.simplify(self.neg_constraints | {expr}))
+        if check_constraints_feasible(
+                list(c <= -EPS for c in constraints), list(self.sym_vars)
+        ):
             return constraints
         else:
             return None
 
     def _check_branch_ge(self, expr):
         assert expr.free_symbols <= self.sym_vars
-        constraints = set(sp.simplify(self.pos_constraints)) | {expr >= 0}
-        if check_constraints_feasible(constraints, self.sym_vars):
+        constraints = set(sp.simplify(self.pos_constraints | {expr}))
+        if check_constraints_feasible(
+                list(c >= 0 for c in constraints), list(self.sym_vars)
+        ):
             return constraints
         else:
             return None
 
     def _branch_lt(self, expr):
-        assert self.lt is None
         if constraints := self._check_branch_lt(expr):
             self.lt = dataclasses.replace(self, neg_constraints=constraints, lt=None)
         return self.lt
 
     def _branch_ge(self, expr):
-        assert self.ge is None
         if constraints := self._check_branch_ge(expr):
-            self.ge = dataclasses.replace(self, neg_constraints=constraints, ge=None)
+            self.ge = dataclasses.replace(self, pos_constraints=constraints, ge=None)
         return self.ge
 
-    def find_pivot_column(self):
+    def _get_obj_coeffs(self):
         objective_coeffs = self.tableau[-1, :-1]
         if self.use_symbols:
             objective_coeffs = unitize_syms(objective_coeffs, self.domain_vars)
@@ -489,10 +503,19 @@ class SymbolicTableau:
             for j, coeff in enumerate(objective_coeffs)
             if coeff != 0
         ]
+        return objective_coeffs
+
+    def get_obj_coeff(self, col):
+        return next((j, coeff) for j, coeff in self._get_obj_coeffs() if j == col)
+
+    def find_pivot_column(self):
+        objective_coeffs = self._get_obj_coeffs()
         for j, coeff in objective_coeffs:
-            if coeff not in self.neg_constraints:
+            if (
+                    coeff not in self.neg_constraints | self.pos_constraints
+            ) and self._check_branch_lt(coeff):
                 return j, coeff
-        raise Exception("no negative coefficient")
+        return None
 
     def find_pivot_row(self, col_idx):
         piv_col = self.tableau[:-1, col_idx]
@@ -526,29 +549,32 @@ class SymbolicTableau:
             )
             return M
 
-        self.tableau = _pivot()
+        tableau = _pivot()
+        # self.tableau = lcm_tableau(tableau)
+        self.tableau = tableau
 
+    def __getitem__(self, item):
+        return self.tableau[item]
 
-def one_round_simplex(tab):
-    piv_col_idx, coeff = tab.find_pivot_column()
-    tab = tab._branch_lt(coeff)
-    piv_row_idx = tab.find_pivot_row(piv_col_idx)
-    tab.pivot(piv_row_idx, piv_col_idx)
-    return tab
+    def copy(self):
+        return dataclasses.replace(self)
+
 
 def test_check_constraint_checker():
     x1 = sp.Symbol("x1", real=True)
     x2 = sp.Symbol("x2", real=True)
-    print(check_constraints_feasible([x1 - x2 <= -EPS, x1 - x2 >= 0, x1 <= -EPS], (x1, x2)))
+    print(
+        check_constraints_feasible(
+            [x1 - x2 <= -EPS, x1 - x2 >= 0, x1 <= -EPS], (x1, x2)
+        )
+    )
     print()
     print(check_constraints_feasible([x1 <= -EPS, x1 <= 0], (x1, x2)))
     print()
     print(check_constraints_feasible([x1 <= -EPS, x1 >= 0], (x1, x2)))
 
 
-if __name__ == "__main__":
-    # test_check_constraint_checker()
-    # test_build_tableau_from_eqns()
+def test_manual_tree():
     tableau, domain_vars, (x1, x2) = build_tableau_from_eqns(
         eqns_str=f"""
     z = x1*l1 + x2*l2 + 1
@@ -565,73 +591,94 @@ if __name__ == "__main__":
         use_symbols=False,
     )
 
-    tab = SymbolicTableau(tableau, set(domain_vars), {x1, x2})
-    print(tab)
-    new_tab = one_round_simplex(tab)
-    print(new_tab)
-    new_tab = one_round_simplex(new_tab)
-    print(new_tab)
-    new_tab = one_round_simplex(new_tab)
-    print(new_tab)
-    new_tab = one_round_simplex(new_tab)
-    print(new_tab)
-    new_tab = one_round_simplex(new_tab)
-    print(new_tab)
-    new_tab = one_round_simplex(new_tab)
-    print(new_tab)
+    tab1 = SymbolicTableau(tableau, set(domain_vars), {x1, x2})
+    print("start tab", tab1)
 
-    # x1 < 0 => l1 entering
-    # pivot = find_symbolic_pivot(tableau)
+    piv_col_idx, coeff = tab1.get_obj_coeff(col=0)
+    tab2 = tab1._branch_lt(coeff)
+    piv_row_idx = tab2.find_pivot_row(piv_col_idx)
+    tab2.pivot(piv_row_idx, piv_col_idx)
+    print("tab2", tab2)
 
-    # diff = lt.clone_new_expr(x2 - x1)
-    # sym_pprint(diff)
-    #
-    # diff_lt = diff.branch_lt()
-    # sym_pprint(diff_lt)
-    #
-    # A, b = linear_ineq_to_matrix(diff_lt.param_constraints, *diff_lt.param_vars)
-    # A = np.array(A)
-    # b = np.array(b)
-    # c = [0] * len(diff_lt.param_vars)
-    # res = scipy_linprog(c, A_ub=A, b_ub=b, method="highs", bounds=[(None, None)])
-    # print(res.success)
+    piv_col_idx, coeff = tab2.get_obj_coeff(col=1)
+    tab3 = tab2._branch_lt(coeff)
+    piv_row_idx = tab3.find_pivot_row(piv_col_idx)
+    tab3.pivot(piv_row_idx, piv_col_idx)
+    print("tab3", tab3)
+    if piv_col_idx_coeff := tab3.find_pivot_column():
+        piv_col_idx, coeff = piv_col_idx_coeff
+        piv_row_idx = tab3.find_pivot_row(piv_col_idx)
+        tab3.pivot(piv_row_idx, piv_col_idx)
+        print("tab3", tab3)
+    else:
+        print("answer", tab3[-1, -1])
 
-    # A = sp.Matrix([
-    #     [5, 4],
-    #     [1, 5]
-    # ])
-    # sym_pprint(A)
-    # sym_pprint(A.inv())
-    # b = sp.Matrix([14, 7])
-    # sym_pprint(A.inv() * b)
+    piv_col_idx, coeff = tab2.get_obj_coeff(col=1)
+    tab4 = tab2._branch_ge(coeff)
+    if piv_col_idx_coeff := tab4.find_pivot_column():
+        piv_col_idx, coeff = piv_col_idx_coeff
+        piv_row_idx = tab4.find_pivot_row(piv_col_idx)
+        tab4.pivot(piv_row_idx, piv_col_idx)
+        print("tab4", tab4)
+    else:
+        print("answer", tab4[-1, -1])
 
-    #
-    # test_single_symbol_objective()
-    # ineq1 = parse_expr(
-    #     "l1 + l2 <= 5",
-    #     transformations=standard_transformations + (convert_equals_signs,),
-    # )
-    # ineq2 = parse_expr(
-    #     "-l1 <= 1",
-    #     transformations=standard_transformations + (convert_equals_signs,),
-    # )
-    # print()
+    _, coeff = tab1.get_obj_coeff(col=0)
+    tab5 = tab1._branch_ge(coeff)
+    print("tab5", tab5)
+    if piv_col_idx_coeff := tab5.find_pivot_column():
+        piv_col_idx, coeff = piv_col_idx_coeff
+        piv_row_idx = tab5.find_pivot_row(piv_col_idx)
+        tab6 = tab1._branch_lt(coeff)
+        tab6.pivot(piv_row_idx, piv_col_idx)
+        print("tab6", tab6)
+    else:
+        print("answer", tab5[-1, -1])
 
-    # expr = parse_expr('z <= x1*l1 + x2*l2', evaluate=False)
-    # expr = parse_latex('z \leq x1*l1 + x2*l2')
-    # tab = sp.Matrix([
-    #     [],
-    #     [],
-    #     [],
-    #
-    # ])
-    # test_single_symbol_constraints()
+    if piv_col_idx_coeff := tab6.find_pivot_column():
+        piv_col_idx, coeff = piv_col_idx_coeff
+        tab7 = tab6._branch_lt(coeff)
+        piv_row_idx = tab7.find_pivot_row(piv_col_idx)
+        tab7.pivot(piv_row_idx, piv_col_idx)
+        print("tab7", tab7)
+    else:
+        print("answer", tab6[-1, -1])
 
-# b = {"c": "d", "d": 3}
-# with suppress(Exception, SyntaxError):
-#     (
-#         c := b["c"],
-#         d := b[c],
-#     )
-# print(c)
-# print(d)
+    if piv_col_idx_coeff := tab7.find_pivot_column():
+        piv_col_idx, coeff = piv_col_idx_coeff
+        tab8 = tab7._branch_lt(coeff)
+        piv_row_idx = tab8.find_pivot_row(piv_col_idx)
+        tab8.pivot(piv_row_idx, piv_col_idx)
+        print("tab8", tab8)
+    else:
+        print("answer", tab7[-1, -1])
+
+    _, coeff = tab6.get_obj_coeff(col=0)
+    tab7 = tab6._branch_ge(coeff)
+    print("tab7", tab7)
+    if piv_col_idx_coeff := tab7.find_pivot_column():
+        piv_col_idx, coeff = piv_col_idx_coeff
+        tab7 = tab7._branch_lt(coeff)
+        piv_row_idx = tab7.find_pivot_row(piv_col_idx)
+        tab7.pivot(piv_row_idx, piv_col_idx)
+        print("tab7", tab7)
+    else:
+        print("answer", tab7[-1, -1])
+
+    _, coeff = tab5.get_obj_coeff(col=1)
+    tab8 = tab5._branch_ge(coeff)
+    print("tab8", tab8)
+    if piv_col_idx_coeff := tab8.find_pivot_column():
+        piv_col_idx, coeff = piv_col_idx_coeff
+        tab8 = tab8._branch_lt(coeff)
+        piv_row_idx = tab8.find_pivot_row(piv_col_idx)
+        tab8.pivot(piv_row_idx, piv_col_idx)
+        print("tab8", tab8)
+    else:
+        print("answer", tab8[-1, -1])
+
+
+if __name__ == "__main__":
+    # test_check_constraint_checker()
+    # test_build_tableau_from_eqns()
+    test_manual_tree()
