@@ -20,6 +20,7 @@ from sympy import (
 from sympy.parsing.sympy_parser import standard_transformations, convert_equals_signs
 from sympy.solvers.solveset import linear_coeffs
 
+from inequalities import _pivot
 from simplex import (
     linprog,
     disp_tableau,
@@ -29,7 +30,7 @@ from simplex import (
     normalize_tableau,
 )
 
-EPS = 100 * sys.float_info.epsilon
+EPS = 1
 
 
 def get_var_coeffs(eqn, vars):
@@ -322,7 +323,7 @@ def get_symbol_exprs_in_objective(tab):
     return tuple(c for c in tab[-1, :] if c.free_symbols)
 
 
-def linear_ineq_to_matrix(inequalities, *symbols):
+def linear_ineq_to_matrix(inequalities, symbols):
     inequalities = sp.sympify(inequalities)
     for i, ineq in enumerate(inequalities):
         inequalities[i] = ineq.func(ineq.lhs.as_expr() - ineq.rhs.as_expr(), 0)
@@ -331,6 +332,8 @@ def linear_ineq_to_matrix(inequalities, *symbols):
     for i, f in enumerate(inequalities):
         if isinstance(f, (Equality, sp.LessThan, sp.GreaterThan)):
             f = f.rewrite(Add, evaluate=False)
+        if isinstance(f, sp.GreaterThan):
+            f = f.reversedsign
         coeff_list = linear_coeffs(f.lhs, *symbols)
         b.append(-coeff_list.pop())
         A.append(coeff_list)
@@ -366,7 +369,7 @@ class ParamTree:
         self.lt = ParamTree(
             self.expr,
             self.param_vars,
-            self.param_constraints + [self.expr <= -EPS],
+            self.param_constraints + [self.expr < 0],
             # {
             #     v: ((sol[v] if v in sol else self.param_constraints[v])
             #         & self.param_constraints[v]).simplify()
@@ -400,11 +403,38 @@ class ParamTree:
 
 def check_constraints_feasible(constraints, sym_vars):
     A, b = linear_ineq_to_matrix(constraints, sym_vars)
-    A = np.array(A)
-    b = np.array(b)
-    c = [0] * len(sym_vars)
-    res = scipy_linprog(c, A_ub=A, b_ub=b, method="highs", bounds=[(None, None)])
-    return res.success
+    A = np.array(A).astype(int)
+    b = np.array(b).astype(int)
+    # 3rd version here
+    # https://en.wikipedia.org/wiki/Farkas%27_lemma#Variants
+    # if there's a solution with obj value >= 0.0 then
+    # a negative solution doesn't exist (since we're mining)
+    # hence the original system is feasible
+    # if there's a solution and it's negative then the original system
+    # isn't feasible
+    # if there's no solution because it's negative unbounded then
+    # there exists a negative solution and therefore
+    # the original solution isn't feasible
+    res = scipy_linprog(
+        b.T,
+        A_eq=A.T,
+        b_eq=np.zeros(len(A.T)),
+        method="highs",
+        bounds=[(0, None)],
+        integrality=np.ones(len(b)),
+    )
+    if res.success:
+        if res.fun >= 0.0:
+            return True
+        else:
+            return False
+    else:
+        assert "At lower/fixed bound" in res.message
+        return False
+
+
+def unitize_syms(expr, vars):
+    return expr.subs({s: 1 for s in vars})
 
 
 @dataclass
@@ -424,15 +454,15 @@ class SymbolicTableau:
 
     def _check_branch_lt(self, expr):
         assert expr.free_symbols <= self.sym_vars
-        constraints = self.neg_constraints | {expr <= -EPS}
-        if check_constraints_feasible(constraints, self.sym_vars):
+        constraints = set(sp.simplify(self.neg_constraints)) | {expr <= -EPS}
+        if check_constraints_feasible(list(constraints), list(self.sym_vars)):
             return constraints
         else:
             return None
 
     def _check_branch_ge(self, expr):
         assert expr.free_symbols <= self.sym_vars
-        constraints = self.neg_constraints | {expr >= 0}
+        constraints = set(sp.simplify(self.pos_constraints)) | {expr >= 0}
         if check_constraints_feasible(constraints, self.sym_vars):
             return constraints
         else:
@@ -441,22 +471,83 @@ class SymbolicTableau:
     def _branch_lt(self, expr):
         assert self.lt is None
         if constraints := self._check_branch_lt(expr):
-            self.lt = dataclasses.replace(self, neg_constraints=constraints)
+            self.lt = dataclasses.replace(self, neg_constraints=constraints, lt=None)
         return self.lt
 
     def _branch_ge(self, expr):
         assert self.ge is None
         if constraints := self._check_branch_ge(expr):
-            self.ge = dataclasses.replace(self, neg_constraints=constraints)
+            self.ge = dataclasses.replace(self, neg_constraints=constraints, ge=None)
         return self.ge
 
     def find_pivot_column(self):
-        objective_coeffs = tuple(map(lambda e: get_var_coeffs(e, self.domain_vars), self.tableau[-1, :]))
-        print(objective_coeffs)
+        objective_coeffs = self.tableau[-1, :-1]
+        if self.use_symbols:
+            objective_coeffs = unitize_syms(objective_coeffs, self.domain_vars)
+        objective_coeffs = [
+            (j, sp.simplify(coeff))
+            for j, coeff in enumerate(objective_coeffs)
+            if coeff != 0
+        ]
+        for j, coeff in objective_coeffs:
+            if coeff not in self.neg_constraints:
+                return j, coeff
+        raise Exception("no negative coefficient")
 
+    def find_pivot_row(self, col_idx):
+        piv_col = self.tableau[:-1, col_idx]
+        if self.use_symbols:
+            piv_col = unitize_syms(piv_col, self.domain_vars)
+        if all(a <= 0 for a in piv_col):
+            raise UnboundedProblem
+        sol_col = self.tableau[:-1, -1]
+        if self.use_symbols:
+            sol_col = unitize_syms(sol_col, self.tableau.free_symbols)
+        ratios = [a / b if b > 0 else sp.oo for a, b in zip(sol_col, piv_col)]
+        piv_row_idx = np.argmin(ratios)
+        assert ratios[piv_row_idx] != sp.oo
+        return piv_row_idx
+
+    def pivot(self, piv_row_idx, piv_col_idx):
+        def _pivot():
+            M = self.tableau.copy()
+            piv_val = M[piv_row_idx, piv_col_idx]
+            piv_row = M[piv_row_idx, :] / piv_val
+            for i in range(M.rows):
+                if i == piv_row_idx:
+                    continue
+                M[i, :] -= piv_row * M[i, piv_col_idx]
+                if M[i, -1].could_extract_minus_sign():
+                    M[i, :] *= -1
+                M[i, :] = sp.simplify(M[i, :])
+
+            M[piv_row_idx, :] = piv_row * (
+                piv_val.free_symbols.pop() if piv_val.free_symbols else 1
+            )
+            return M
+
+        self.tableau = _pivot()
+
+
+def one_round_simplex(tab):
+    piv_col_idx, coeff = tab.find_pivot_column()
+    tab = tab._branch_lt(coeff)
+    piv_row_idx = tab.find_pivot_row(piv_col_idx)
+    tab.pivot(piv_row_idx, piv_col_idx)
+    return tab
+
+def test_check_constraint_checker():
+    x1 = sp.Symbol("x1", real=True)
+    x2 = sp.Symbol("x2", real=True)
+    print(check_constraints_feasible([x1 - x2 <= -EPS, x1 - x2 >= 0, x1 <= -EPS], (x1, x2)))
+    print()
+    print(check_constraints_feasible([x1 <= -EPS, x1 <= 0], (x1, x2)))
+    print()
+    print(check_constraints_feasible([x1 <= -EPS, x1 >= 0], (x1, x2)))
 
 
 if __name__ == "__main__":
+    # test_check_constraint_checker()
     # test_build_tableau_from_eqns()
     tableau, domain_vars, (x1, x2) = build_tableau_from_eqns(
         eqns_str=f"""
@@ -471,16 +562,23 @@ if __name__ == "__main__":
         domain_vars=["l1", "l2"],
         range_var="z",
         symbol_vars=["x1", "x2"],
-        use_symbols=True,
+        use_symbols=False,
     )
 
     tab = SymbolicTableau(tableau, set(domain_vars), {x1, x2})
     print(tab)
-    tab.find_pivot_column()
-
-    # x1 < 0
-    lt = tab._branch_lt(x1)
-    print(lt)
+    new_tab = one_round_simplex(tab)
+    print(new_tab)
+    new_tab = one_round_simplex(new_tab)
+    print(new_tab)
+    new_tab = one_round_simplex(new_tab)
+    print(new_tab)
+    new_tab = one_round_simplex(new_tab)
+    print(new_tab)
+    new_tab = one_round_simplex(new_tab)
+    print(new_tab)
+    new_tab = one_round_simplex(new_tab)
+    print(new_tab)
 
     # x1 < 0 => l1 entering
     # pivot = find_symbolic_pivot(tableau)
