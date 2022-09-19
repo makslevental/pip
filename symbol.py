@@ -81,7 +81,7 @@ def make_constraints_from_eqns(eqns, domain_vars, range_var, use_symbols):
 
 
 def build_tableau_from_eqns(
-        eqns_str, domain_vars, range_var, symbol_vars, minimize=True, use_symbols=False
+    eqns_str, domain_vars, range_var, symbol_vars, minimize=True, use_symbols=False
 ):
     domain_vars = {d: sp.Symbol(d, real=True) for d in sorted(domain_vars)}
     range_var = {range_var: sp.Symbol(range_var, real=True)}
@@ -248,7 +248,7 @@ def handle_parameterized_objective(tab):
             if negs and all(negs):
                 PARAMETER_DOMAIN_OBJECTIVE_VAL_MAP[
                     Interval(-sp.oo, sp.oo) - _sol
-                    ] = -sp.oo
+                ] = -sp.oo
             if sol is None:
                 sol = _sol
             else:
@@ -261,14 +261,14 @@ def handle_parameterized_objective(tab):
 def print_param_sol_dict():
     collected_intervals = []
     for inter, fn in sorted(
-            PARAMETER_DOMAIN_OBJECTIVE_VAL_MAP.items(),
-            key=lambda inter_fn: inter_fn[0].right,
+        PARAMETER_DOMAIN_OBJECTIVE_VAL_MAP.items(),
+        key=lambda inter_fn: inter_fn[0].right,
     ):
         if collected_intervals:
             prev_inter, prev_fn = collected_intervals[-1]
             if (
-                    inter.intersection(prev_inter) == inter
-                    or prev_inter.intersection(inter) == prev_inter
+                inter.intersection(prev_inter) == inter
+                or prev_inter.intersection(inter) == prev_inter
             ):
                 assert fn == prev_fn
                 collected_intervals.pop()
@@ -289,7 +289,7 @@ def find_symbolic_pivot(tab, build_param_tableau):
     evaled_context_tableau = param_tableau.subs(
         {s: 1 for s in param_tableau.free_symbols}
     )
-    _z, x = get_solution(evaled_context_tableau)
+    # _z, x = get_solution(evaled_context_tableau)
     poses = [a >= 0 for a in tab[:m, -1] if not a.atoms(Symbol)]
     assert not poses or all(b >= 0 for b in tab[:m, -1])
     if tab[-1, :-1].atoms(Symbol):
@@ -353,66 +353,6 @@ def linear_ineq_to_matrix(inequalities, symbols):
     return A, b
 
 
-@dataclass
-class ParamTree:
-    expr: sp.Expr
-    param_vars: tuple[sp.Symbol]
-    # param_constraints: dict[str, Set] = None
-    param_constraints: list[sp.Expr] = field(default_factory=lambda: [])
-    parent: "ParamTree" = None
-    lt: "ParamTree" = None
-    ge: "ParamTree" = None
-    use_symbols: bool = True
-
-    # def __post_init__(self):
-    #     if self.param_constraints is None:
-    #         self.param_constraints = {v: Reals for v in self.param_vars}
-
-    def clone_new_expr(self, expr):
-        return ParamTree(
-            expr,
-            tuple(sorted(self.param_vars, key=lambda v: v.name)),
-            self.param_constraints,
-            self,
-        )
-
-    def branch_lt(self):
-        # sol = solve_linear_inequalities((self.expr < 0,), self.param_vars)
-        self.lt = ParamTree(
-            self.expr,
-            self.param_vars,
-            self.param_constraints + [self.expr < 0],
-            # {
-            #     v: ((sol[v] if v in sol else self.param_constraints[v])
-            #         & self.param_constraints[v]).simplify()
-            #     for v in self.param_vars
-            # },
-            self,
-        )
-        return self.lt
-
-    def branch_ge(self):
-        # sol = solve_linear_inequalities((self.expr >= 0,), self.param_vars)
-        self.ge = ParamTree(
-            self.expr,
-            self.param_vars,
-            self.param_constraints + [self.expr >= 0],
-            # {
-            #     v: ((sol[v] if v in sol else self.param_constraints[v])
-            #         & self.param_constraints[v]).simplify()
-            #     for v in self.param_vars
-            # },
-            self,
-        )
-        return self.ge
-
-    def solve_constraints(self):
-        pass
-
-    def __str__(self):
-        return f"ParamTree(expr={self.expr}, param_vars={self.param_vars}, constraints={self.param_constraints})"
-
-
 def check_constraints_feasible(constraints, sym_vars):
     A, b = linear_ineq_to_matrix(constraints, sym_vars)
     A = np.array(A).astype(int)
@@ -449,6 +389,10 @@ def unitize_syms(expr, vars):
     return expr.subs({s: 1 for s in vars})
 
 
+EXPLORED: set[sp.Expr] = set()
+BRANCHES: list[sp.Expr] = []
+
+
 @dataclass
 class SymbolicTableau:
     tableau: sp.Matrix
@@ -466,32 +410,53 @@ class SymbolicTableau:
 
     def _check_branch_lt(self, expr):
         assert expr.free_symbols <= self.sym_vars
-        constraints = set(sp.simplify(self.neg_constraints | {expr}))
+        pos_constraints = set(sp.simplify(self.pos_constraints))
+        neg_constraints = set(sp.simplify(self.neg_constraints | {expr}))
         if check_constraints_feasible(
-                list(c <= -EPS for c in constraints), list(self.sym_vars)
+            list(c >= 0 for c in pos_constraints)
+            + list(c <= -EPS for c in neg_constraints),
+            list(self.sym_vars),
         ):
-            return constraints
+            return neg_constraints
         else:
             return None
 
     def _check_branch_ge(self, expr):
         assert expr.free_symbols <= self.sym_vars
-        constraints = set(sp.simplify(self.pos_constraints | {expr}))
+        pos_constraints = set(sp.simplify(self.pos_constraints | {expr}))
+        neg_constraints = set(sp.simplify(self.neg_constraints))
         if check_constraints_feasible(
-                list(c >= 0 for c in constraints), list(self.sym_vars)
+            list(c >= 0 for c in pos_constraints)
+            + list(c <= -EPS for c in neg_constraints),
+            list(self.sym_vars),
         ):
-            return constraints
+            return pos_constraints
         else:
             return None
 
     def _branch_lt(self, expr):
         if constraints := self._check_branch_lt(expr):
-            self.lt = dataclasses.replace(self, neg_constraints=constraints, lt=None)
+            self.lt = dataclasses.replace(
+                self,
+                neg_constraints=constraints,
+                lt=None,
+                ge=None,
+                parent=self,
+            )
+            BRANCHES.append((expr, self))
         return self.lt
 
     def _branch_ge(self, expr):
         if constraints := self._check_branch_ge(expr):
-            self.ge = dataclasses.replace(self, pos_constraints=constraints, ge=None)
+            # assert expr not in self.branches
+            self.ge = dataclasses.replace(
+                self,
+                pos_constraints=constraints,
+                lt=None,
+                ge=None,
+                parent=self,
+            )
+            BRANCHES.append((expr, self))
         return self.ge
 
     def _get_obj_coeffs(self):
@@ -512,7 +477,7 @@ class SymbolicTableau:
         objective_coeffs = self._get_obj_coeffs()
         for j, coeff in objective_coeffs:
             if (
-                    coeff not in self.neg_constraints | self.pos_constraints
+                coeff not in self.neg_constraints | self.pos_constraints
             ) and self._check_branch_lt(coeff):
                 return j, coeff
         return None
@@ -558,6 +523,14 @@ class SymbolicTableau:
 
     def copy(self):
         return dataclasses.replace(self)
+
+    def backup(self):
+        last_expr, tab = BRANCHES.pop()
+        while BRANCHES and EXPLORED and last_expr in EXPLORED:
+            last_expr, tab = BRANCHES.pop()
+        right = tab._branch_ge(last_expr)
+        EXPLORED.add(last_expr)
+        return dataclasses.replace(right)
 
 
 def test_check_constraint_checker():
@@ -678,7 +651,47 @@ def test_manual_tree():
         print("answer", tab8[-1, -1])
 
 
+def test_auto_tree():
+    tableau, domain_vars, (x1, x2) = build_tableau_from_eqns(
+        eqns_str=f"""
+    z = x1*l1 + x2*l2 + 1
+    l1 + l2 <= 5
+    -l1 <= 1
+    -l2 <= 2
+    -l1 + l2 <= 0
+    # l1 >= 0
+    # l2 >= 0
+    """,
+        domain_vars=["l1", "l2"],
+        range_var="z",
+        symbol_vars=["x1", "x2"],
+        use_symbols=False,
+    )
+
+    tab = SymbolicTableau(tableau, set(domain_vars), {x1, x2})
+
+    for i in range(10):
+        if piv_col_idx_coeff := tab.find_pivot_column():
+            piv_col_idx, coeff = piv_col_idx_coeff
+            print(i, coeff)
+            tab = tab._branch_lt(coeff)
+            piv_row_idx = tab.find_pivot_row(piv_col_idx)
+            tab.pivot(piv_row_idx, piv_col_idx)
+            print("tab", tab)
+        else:
+            print(
+                "answer",
+                tab.neg_constraints,
+                "< 0",
+                tab.pos_constraints,
+                ">= 0",
+                tab[-1, -1],
+            )
+            tab = tab.backup()
+
+
 if __name__ == "__main__":
     # test_check_constraint_checker()
     # test_build_tableau_from_eqns()
-    test_manual_tree()
+    # test_manual_tree()
+    test_auto_tree()
