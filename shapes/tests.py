@@ -86,11 +86,22 @@ def test_resnet():
 def test_resnet_symbolic_planning():
     tensor_ssa_to_sizes, shape_sym_to_formula, live_ranges = test_resnet()
     tensor_ssa_to_sympy_expr = {}
+    coeffs = set()
     for tensor, sizes in tensor_ssa_to_sizes.items():
         sympy_expr = np.prod(
             [sp.sympify(shape_sym_to_formula.get(s, s), rational=True) for s in sizes]
         )
+        if sympy_expr.free_symbols:
+            coeffs.add(tuple(sympy_expr.free_symbols))
         tensor_ssa_to_sympy_expr[tensor] = sympy_expr
+
+    param_to_coeff = {}
+    for i, coeff in enumerate(coeffs):
+        thetai = sp.Symbol(f"θ_{i}")
+        param_to_coeff[thetai] = coeff
+        for tensor, sympy_expr in tensor_ssa_to_sympy_expr.items():
+            if sympy_expr.free_symbols:
+                tensor_ssa_to_sympy_expr[tensor] = sympy_expr.subs(np.prod(list(sympy_expr.free_symbols)), thetai)
 
     ids = {
         id: tensor
@@ -162,12 +173,14 @@ def test_resnet_symbolic_planning():
             p.value = np.random.randint(1, 10)
 
         start = time.time()
-        prob.solve(solver=cp.GUROBI, verbose=True, warm_start=True)
+        # prob.solve(solver=cp.GUROBI, verbose=True, warm_start=True)
+        prob.solve(solver=cp.GLPK_MI, verbose=True, warm_start=True)
         end = time.time()
         times.append(end - start)
         new_problem = cp.Problem(obj, constraints)
         start = time.time()
-        new_problem.solve(solver=cp.GUROBI, verbose=True, warm_start=True)
+        # new_problem.solve(solver=cp.GUROBI, verbose=True, warm_start=True)
+        new_problem.solve(solver=cp.GLPK_MI, verbose=True, warm_start=True)
         end = time.time()
         new_problem_times.append(end - start)
 
@@ -175,11 +188,12 @@ def test_resnet_symbolic_planning():
     plt.figure(figsize=(6, 6), dpi=300)
     plt.plot(xs, times, label="Re-solving a DPP problem")
     plt.plot(xs, new_problem_times, label="Solving a new problem")
-    plt.xlabel(r"iter", fontsize=16)
+    plt.xticks(xs, list(map(int, xs)))
+    plt.xlabel(r"trials", fontsize=16)
     plt.ylabel(r"time (s)", fontsize=16)
     plt.legend()
     plt.yscale("log")
-    plt.savefig("../docs/dpp.pdf")
+    plt.savefig("../docs/dpp1.png")
 
 
 if __name__ == "__main__":
