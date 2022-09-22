@@ -3,7 +3,7 @@ from sympy import pprint as sym_pprint
 
 from simplex import linprog, disp_tableau, find_pivot, sweep, UnboundedProblem
 from symbol import EPS, SymbolicTableau, solve
-from util import check_constraints_feasible, build_tableau_from_eqns
+from util import check_constraints_feasible, build_tableau_from_eqns_str
 
 
 def test_build_tableau_from_eqns():
@@ -18,7 +18,7 @@ def test_build_tableau_from_eqns():
             # ([0, 0, 1], ">=", 0),
         ],
     )
-    tableau_test, _domain_vars, _symbol_vars = build_tableau_from_eqns(
+    tableau_test, _domain_vars, _symbol_vars = build_tableau_from_eqns_str(
         f"""
     z = (-3 + 2*θ)*x0 + (3 - θ)*x1 + x2
     x0 + 2*x1 - 3*x2 <= 5
@@ -48,7 +48,7 @@ def test_check_constraint_checker():
 
 
 def test_manual_tree():
-    tableau, domain_vars, (x1, x2) = build_tableau_from_eqns(
+    tableau, domain_vars, (x1, x2) = build_tableau_from_eqns_str(
         eqns_str=f"""
     z = x1*l1 + x2*l2 + 1
     l1 + l2 <= 5
@@ -152,7 +152,7 @@ def test_manual_tree():
 
 
 def test_auto_tree():
-    tableau, domain_vars, (x1, x2) = build_tableau_from_eqns(
+    tableau, domain_vars, (x1, x2) = build_tableau_from_eqns_str(
         eqns_str=f"""
     z = x1*l1 + x2*l2 + 1
     l1 + l2 <= 5

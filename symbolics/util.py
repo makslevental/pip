@@ -7,7 +7,7 @@ from sympy import Equality, Add, Matrix, parse_expr
 from sympy.parsing.sympy_parser import standard_transformations, convert_equals_signs
 from sympy.solvers.solveset import linear_coeffs
 
-from simplex import linprog
+from symbolics.simplex import linprog
 
 
 def symbolic_pivot(tableau, piv_row_idx, piv_col_idx):
@@ -83,7 +83,32 @@ def linear_ineq_to_matrix(inequalities, symbols):
 
 
 def build_tableau_from_eqns(
-        eqns_str, domain_vars, range_var, symbol_vars, minimize=True, use_symbols=False
+    eqns, domain_vars, range_var, symbol_vars, minimize, use_symbols
+):
+    objective = next(
+        get_var_coeffs(eqn.rhs, domain_vars)[0]
+        for eqn in eqns
+        if range_var in eqn.free_symbols
+    )
+    if use_symbols:
+        objective = [sym * coeff for sym, coeff in objective]
+    else:
+        objective = [coeff for sym, coeff in objective]
+    constraints = make_constraints_from_eqns(eqns, domain_vars, range_var, use_symbols)
+
+    tableau = linprog(
+        **{
+            "minimize" if minimize else "maximize": objective,
+            "subject_to": constraints,
+            "use_symbols": use_symbols,
+        }
+    )
+
+    return tableau, domain_vars, symbol_vars
+
+
+def build_tableau_from_eqns_str(
+    eqns_str, domain_vars, range_var, symbol_vars, minimize=True, use_symbols=False
 ):
     domain_vars = {d: sp.Symbol(d, real=True) for d in sorted(domain_vars)}
     range_var = {range_var: sp.Symbol(range_var, real=True)}
@@ -106,26 +131,9 @@ def build_tableau_from_eqns(
     range_var = range_var.popitem()[1]
     symbol_vars = tuple(symbol_vars.values())
 
-    objective = next(
-        get_var_coeffs(eqn.rhs, domain_vars)[0]
-        for eqn in eqns
-        if range_var in eqn.free_symbols
+    return build_tableau_from_eqns(
+        eqns, domain_vars, range_var, symbol_vars, minimize, use_symbols
     )
-    if use_symbols:
-        objective = [sym * coeff for sym, coeff in objective]
-    else:
-        objective = [coeff for sym, coeff in objective]
-    constraints = make_constraints_from_eqns(eqns, domain_vars, range_var, use_symbols)
-
-    tableau = linprog(
-        **{
-            "minimize" if minimize else "maximize": objective,
-            "subject_to": constraints,
-            "use_symbols": use_symbols,
-        }
-    )
-
-    return tableau, domain_vars, symbol_vars
 
 
 def get_var_coeffs(eqn, vars):

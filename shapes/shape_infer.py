@@ -1,4 +1,3 @@
-import re
 import warnings
 from collections import defaultdict
 from pathlib import Path
@@ -6,9 +5,12 @@ from pprint import pformat
 from typing import List
 
 import torch
+from ncls import NCLS
 from torch import TensorType
 from wolframclient.evaluation import WolframLanguageSession
 from wolframclient.language import wlexpr, wl
+import sympy as sp
+import numpy as np
 
 torch._C._jit_set_symbolic_shapes_test_mode(True)
 torch._C.Graph.set_global_print_source_ranges(False)
@@ -242,7 +244,9 @@ def get_shape_compute_graph(frozen_model_graph, inp_shapes: List[List[int]]):
                 continue
 
             try:
-                sym_sizes = [f"SS({o})" if o < 0 else o for o in outp.type().symbolic_sizes()]
+                sym_sizes = [
+                    f"SS({o})" if o < 0 else o for o in outp.type().symbolic_sizes()
+                ]
                 tensor_to_sizes[outp.debugName()] = sym_sizes
             except:
                 pass
@@ -266,9 +270,11 @@ def get_op_shape_compute_graphs(shape_compute_graph):
 
 def make_shape_stuff(model, ssa_to_param_map, inp_shapes: List[List[int]]):
     frozen_model = torch.jit.freeze(torch.jit.script(model.eval()))
-    shape_compute_graph, partial_shape_eval_graph, tensor_ssa_to_sizes = get_shape_compute_graph(
-        frozen_model.graph, inp_shapes
-    )
+    (
+        shape_compute_graph,
+        partial_shape_eval_graph,
+        tensor_ssa_to_sizes,
+    ) = get_shape_compute_graph(frozen_model.graph, inp_shapes)
     # op_shape_graphs = get_op_shape_compute_graphs(shape_compute_graph)
     print(f"{shape_compute_graph=}")
     debugname_sym_mapping = {
@@ -299,7 +305,8 @@ def make_shape_stuff(model, ssa_to_param_map, inp_shapes: List[List[int]]):
 
     sym_ssa_to_shape_inputs = eval_backtrace_symbolic_outputs(partial_shape_eval_graph)
     sym_ssa_to_shape_inputs = {
-        "%" + k: translate(v, ssa_to_param_map) for k, v in sym_ssa_to_shape_inputs.items()
+        "%" + k: translate(v, ssa_to_param_map)
+        for k, v in sym_ssa_to_shape_inputs.items()
     }
 
     return (
@@ -369,7 +376,9 @@ def get_tensor_live_ranges(graph):
                 continue
             tensor_topo_idx[outp] = idx
             for use in outp.uses():
-                tensor_last_use[outp] = max(tensor_last_use[outp], node_topo_idx[use.user])
+                tensor_last_use[outp] = max(
+                    tensor_last_use[outp], node_topo_idx[use.user]
+                )
 
     # for inp in graph.inputs():
     #     if not isinstance(inp.type(), TensorType):
@@ -383,3 +392,47 @@ def get_tensor_live_ranges(graph):
         live_ranges[val.debugName()] = (idx, tensor_last_use[val])
 
     return live_ranges
+
+
+def get_constraints(tensor_ssa_to_sizes, shape_sym_to_formula, live_ranges):
+    tensor_ssa_to_sympy_expr = {}
+    coeffs = set()
+    for tensor, sizes in tensor_ssa_to_sizes.items():
+        sympy_expr = np.prod(
+            [sp.sympify(shape_sym_to_formula.get(s, s), rational=True) for s in sizes]
+        )
+        if sympy_expr.free_symbols:
+            coeffs.add(tuple(sympy_expr.free_symbols))
+        tensor_ssa_to_sympy_expr[tensor] = sympy_expr
+
+    param_to_coeff = {}
+    for i, coeff in enumerate(coeffs):
+        thetai = sp.Symbol(f"θ_{i}")
+        param_to_coeff[thetai] = coeff
+        for tensor, sympy_expr in tensor_ssa_to_sympy_expr.items():
+            if sympy_expr.free_symbols:
+                tensor_ssa_to_sympy_expr[tensor] = sympy_expr.subs(
+                    np.prod(list(sympy_expr.free_symbols)), thetai
+                )
+
+    ids = {
+        id: tensor
+        for id, tensor in zip(np.arange(len(live_ranges)), live_ranges.keys())
+    }
+    starts = np.array([live_ranges[tensor][0] for tensor in ids.values()])
+    ends = np.array([live_ranges[tensor][1] for tensor in ids.values()])
+    live_range_ncls = NCLS(
+        starts=starts,
+        ends=ends + 1,
+        ids=np.array(list(ids.keys())),
+    )
+    edge_list = np.array(
+        live_range_ncls.all_overlaps_both(
+            starts=starts,
+            ends=ends + 1,
+            indexes=np.array(list(ids.keys())),
+        )
+    )
+    edge_list = edge_list.T.astype(order="C", dtype=edge_list.dtype)
+
+    return tensor_ssa_to_sympy_expr, ids, edge_list

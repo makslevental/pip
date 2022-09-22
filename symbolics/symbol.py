@@ -4,9 +4,12 @@ from pprint import pformat
 
 import numpy as np
 import sympy as sp
+from sympy import Add
+from sympy.core.numbers import IntegerConstant
+from sympy.logic.boolalg import Boolean
 
-from simplex import UnboundedProblem
-from util import (
+from symbolics.simplex import UnboundedProblem
+from symbolics.util import (
     symbolic_pivot,
     check_constraints_feasible,
     unitize_syms,
@@ -49,6 +52,7 @@ class SymbolicTableau:
             return None
 
     def branch_lt(self, expr):
+        expr = expr.rewrite(Add, evaluate=False)
         if constraints := self._check_branch(expr <= -EPS):
             lt = dataclasses.replace(
                 self,
@@ -60,6 +64,7 @@ class SymbolicTableau:
             return None
 
     def branch_ge(self, expr):
+        expr = expr.rewrite(Add, evaluate=False)
         if constraints := self._check_branch(expr >= 0):
             ge = dataclasses.replace(
                 self,
@@ -87,8 +92,16 @@ class SymbolicTableau:
     def find_pivot_column(self):
         objective_coeffs = self._get_obj_coeffs()
         for j, coeff in objective_coeffs:
-            if self._check_branch(coeff <= -EPS):
-                return j, coeff
+            coeff = coeff.rewrite(Add, evaluate=False)
+            expr = coeff <= -EPS
+            if isinstance(expr, sp.Expr):
+                if self._check_branch(expr):
+                    return j, coeff
+            elif isinstance(expr, Boolean):
+                return (j, coeff) if bool(expr) else None
+            else:
+                raise NotImplementedError
+
         return None
 
     def find_pivot_row(self, col_idx):
@@ -131,11 +144,12 @@ def solve(tableau):
             )
 
             # backtrack
-            last_expr, tab = branches.pop()
-            while branches and explored and last_expr in explored:
+            if branches:
                 last_expr, tab = branches.pop()
+                while branches and explored and last_expr in explored:
+                    last_expr, tab = branches.pop()
 
-            explored.add(last_expr)
-            branches.append((last_expr, tab))
-            right = tab.branch_ge(last_expr)
-            tableau = right
+                explored.add(last_expr)
+                branches.append((last_expr, tab))
+                right = tab.branch_ge(last_expr)
+                tableau = right
