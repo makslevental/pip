@@ -17,4 +17,9 @@ matplotlib
 #diofant
 wolframclient
 cvxpy
-pyscipopt
+cvxopt
+numpy
+ncls
+
+# you probably want to conda install -c conda-forge pyscipopt
+# pyscipopt
