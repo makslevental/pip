@@ -5,7 +5,6 @@ import numpy as np
 import sympy as sp
 import cvxpy as cp
 import matplotlib.pyplot as plt
-from ncls import NCLS
 
 import torch
 from torch import nn
@@ -68,7 +67,6 @@ def test_vision_model(model):
         tensor_ssa_to_sizes,
         frozen_graph,
     ) = make_shape_stuff(model, ssa_to_param_map, inp_shapes)
-    sym_ssa_to_sym = {v: k for k, v in shape_sym_to_val_debug_name.items()}
     print(frozen_graph.str(False))
     print(partial_shape_eval_graph.str(False))
 
@@ -76,9 +74,14 @@ def test_vision_model(model):
     simplified = simplify_with_mathematica(sym_ssa_to_shape_inputs, ssa_to_param_map)
 
     shape_sym_to_formula = {}
-    for shape_ssa, shape_formula in simplified.items():
-        shape_sym = sym_ssa_to_sym[shape_ssa]
-        shape_sym_to_formula[shape_sym] = shape_formula
+    for shape_sym, shape_ssa in shape_sym_to_val_debug_name.items():
+        if shape_ssa in simplified:
+            shape_sym_to_formula[shape_sym] = simplified[shape_ssa]
+        else:
+            assert shape_ssa in sym_ssa_to_shape_inputs
+            val = sym_ssa_to_shape_inputs[shape_ssa]
+            assert isinstance(val, int)
+            shape_sym_to_formula[shape_sym] = val
         # print(shape_sym, "&=", shape_formula, r"\\")
 
     live_ranges = get_tensor_live_ranges(frozen_graph)
@@ -193,24 +196,19 @@ def test_net_pip():
         tensor_ssa_to_sizes, shape_sym_to_formula, live_ranges
     )
 
-    params = {}
-    constraints = []
-    domain_vars = set()
+    rhss = {}
     symbol_vars = set()
     for id, tensor in ids.items():
         size_expr = tensor_ssa_to_sympy_expr[tensor]
-        for sym in size_expr.free_symbols:
-            params[sym] = sym
-            symbol_vars.add(sym)
+        if size_expr.free_symbols:
+            rhs = sp.Symbol(name=f"θ_{id}")
+            rhss[size_expr] = rhs
+            symbol_vars.add(rhs)
 
     Z = {}
-    # offset_i - offset_j - z_ij * M <= -mem_i
-    # offset_j - offset_j - (1 - z_ij) * M <= -mem_j
     offsets = {}
     for id in ids.keys():
         offsets[id] = sp.Symbol(integer=True, name=f"offset_{id}")
-        domain_vars.add(offsets[id])
-        constraints.append(offsets[id] >= 0)
 
     M = 1e6
     for i, j in edge_list:
@@ -218,23 +216,41 @@ def test_net_pip():
             continue
 
         Z[i, j] = sp.Symbol(name=f"z_{i}{j}", boolean=True)
-        domain_vars.add(Z[i, j])
+
+    # Maximize c'x subject to Ax ≤ b, x ≥ 0
+    num_constraints = 2 * len(Z)
+    num_vars = len(offsets) + len(Z)
+    A = sp.zeros(num_constraints, num_vars)
+    b = sp.zeros(1, num_constraints)
+    for z_idx, ((i, j), z) in enumerate(Z.items()):
         mem_i = tensor_ssa_to_sympy_expr[ids[i]]
         mem_j = tensor_ssa_to_sympy_expr[ids[j]]
-        constraints.append(
-            offsets[i] - offsets[j] - Z[i, j] * M
-            <= -np.prod([params.get(m, m) for m in mem_i.args])
-        )
-        constraints.append(
-            offsets[j] - offsets[i] - (1 - Z[i, j]) * M
-            <= -np.prod([params.get(m, m) for m in mem_j.args])
-        )
 
+        # offset_i - offset_j - z_ij * M <= -mem_i
+        A[2 * z_idx, i], A[2 * z_idx, j], A[2 * z_idx, len(offsets) + z_idx] = offsets[i], -offsets[j], -z * M
+        b[2 * z_idx] = -rhss.get(mem_i, mem_i)
+
+        # offset_j - offset_j - (1 - z_ij) * M <= -mem_j
+        A[2 * z_idx + 1, j], A[2 * z_idx + 1, i], A[2 * z_idx + 1, len(offsets) + z_idx] = offsets[j], -offsets[i], -(1 - z) * M
+        b[2 * z_idx + 1] = -rhss.get(mem_j, mem_j)
+
+    # originally we were minimizing (hence just sum), but now we're maximizing (hence negative sum)
+    c = sp.zeros(num_vars, 1)
+    for i, offset in offsets.items():
+        c[i] = -offset
+
+    # Minimize b'y subject to A'y ≥ c, y ≥ 0
+    y = sp.Matrix(num_constraints, 1, lambda i, j: sp.Symbol(f"y_{i}"))
+    domain_vars = y.values()
     result = sp.Symbol(name="result")
-    constraints.append(sp.Eq(result, sum(list(offsets.values()))))
-    tableau, domain_vars, symbol_vars = build_tableau_from_eqns(
-        constraints,
-        tuple(domain_vars),
+    dual_constraints = [sp.Eq(result, (b @ y)[0])]
+    for dual_row_idx in range(A.T.rows):
+        dual_row = A.T.row(dual_row_idx)
+        dual_constraints.append((dual_row @ y)[0] >= c[dual_row_idx])
+
+    tableau, *_ = build_tableau_from_eqns(
+        dual_constraints,
+        domain_vars=tuple(domain_vars),
         range_var=result,
         symbol_vars=tuple(symbol_vars),
         minimize=True,
@@ -242,7 +258,6 @@ def test_net_pip():
     )
 
     tab = SymbolicTableau(tableau, set(domain_vars), set(symbol_vars))
-    # TODO: need to build the dual here since solve is in terms of symbolic objective
     solve(tab)
 
     # obj = cp.Minimize(cp.sum(list(offsets.values())))
@@ -284,4 +299,5 @@ def test_net_pip():
 
 
 if __name__ == "__main__":
+    # test_resnet_ddp()
     test_net_pip()

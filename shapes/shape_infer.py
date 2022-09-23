@@ -403,17 +403,7 @@ def get_constraints(tensor_ssa_to_sizes, shape_sym_to_formula, live_ranges):
         )
         if sympy_expr.free_symbols:
             coeffs.add(tuple(sympy_expr.free_symbols))
-        tensor_ssa_to_sympy_expr[tensor] = sympy_expr
-
-    param_to_coeff = {}
-    for i, coeff in enumerate(coeffs):
-        thetai = sp.Symbol(f"θ_{i}")
-        param_to_coeff[thetai] = coeff
-        for tensor, sympy_expr in tensor_ssa_to_sympy_expr.items():
-            if sympy_expr.free_symbols:
-                tensor_ssa_to_sympy_expr[tensor] = sympy_expr.subs(
-                    np.prod(list(sympy_expr.free_symbols)), thetai
-                )
+        tensor_ssa_to_sympy_expr[tensor] = sympy_expr.expand().simplify()
 
     ids = {
         id: tensor

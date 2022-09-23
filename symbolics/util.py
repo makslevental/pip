@@ -156,7 +156,8 @@ def make_constraints_from_eqns(eqns, domain_vars, range_var, use_symbols):
             assert eqn.is_Equality
             continue
 
-        coeffs, constant = eqn_to_tuple(eqn, domain_vars)
+        all_one_side = eqn.lhs - eqn.rhs
+        coeffs, constant = get_var_coeffs(all_one_side, vars)
         if use_symbols:
             coeffs = [sym * coeff for sym, coeff in coeffs]
         else:
@@ -164,11 +165,6 @@ def make_constraints_from_eqns(eqns, domain_vars, range_var, use_symbols):
         constraints.append((coeffs, eqn.rel_op, -constant[1]))
 
     return constraints
-
-
-def eqn_to_tuple(eqn, vars):
-    all_one_side = eqn.lhs - eqn.rhs
-    return get_var_coeffs(all_one_side, vars)
 
 
 def lcm_tableau(tableau):
