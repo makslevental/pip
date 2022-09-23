@@ -205,17 +205,22 @@ def test_net_pip():
             rhss[size_expr] = rhs
             symbol_vars.add(rhs)
 
+    for size_expr, rhs in rhss.items():
+        print(f"{size_expr=} {rhs=}")
+    domain_vars = set()
     Z = {}
     offsets = {}
     for id in ids.keys():
         offsets[id] = sp.Symbol(integer=True, name=f"offset_{id}")
+        domain_vars.add(offsets[id])
 
-    M = 1e6
+    M = 1e9
     for i, j in edge_list:
         if i >= j:
             continue
 
         Z[i, j] = sp.Symbol(name=f"z_{i}{j}", boolean=True)
+        domain_vars.add(Z[i, j])
 
     # Maximize c'x subject to Ax ≤ b, x ≥ 0
     num_constraints = 2 * len(Z)
@@ -239,25 +244,31 @@ def test_net_pip():
     for i, offset in offsets.items():
         c[i] = -offset
 
+    # set domain vars to 1
+    A = A.subs([(d, 1) for d in domain_vars])
+    b = b.subs([(d, 1) for d in domain_vars])
+    c = c.subs([(d, 1) for d in domain_vars])
+
     # Minimize b'y subject to A'y ≥ c, y ≥ 0
     y = sp.Matrix(num_constraints, 1, lambda i, j: sp.Symbol(f"y_{i}"))
-    domain_vars = y.values()
+    dual_domain_vars = y.values()
     result = sp.Symbol(name="result")
-    dual_constraints = [sp.Eq(result, (b @ y)[0])]
+    objective = sp.Eq(result, (b @ y)[0])
+    dual_constraints = [objective]
     for dual_row_idx in range(A.T.rows):
         dual_row = A.T.row(dual_row_idx)
         dual_constraints.append((dual_row @ y)[0] >= c[dual_row_idx])
 
     tableau, *_ = build_tableau_from_eqns(
         dual_constraints,
-        domain_vars=tuple(domain_vars),
+        domain_vars=tuple(dual_domain_vars),
         range_var=result,
         symbol_vars=tuple(symbol_vars),
         minimize=True,
         use_symbols=True,
     )
 
-    tab = SymbolicTableau(tableau, set(domain_vars), set(symbol_vars))
+    tab = SymbolicTableau(tableau, set(dual_domain_vars), set(symbol_vars))
     solve(tab)
 
     # obj = cp.Minimize(cp.sum(list(offsets.values())))

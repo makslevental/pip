@@ -1,4 +1,5 @@
 import dataclasses
+import random
 from dataclasses import dataclass, field
 from pprint import pformat
 
@@ -6,6 +7,7 @@ import numpy as np
 import sympy as sp
 from sympy import Add
 from sympy.core.numbers import IntegerConstant
+from sympy.core.relational import Relational
 from sympy.logic.boolalg import Boolean
 
 from symbolics.simplex import UnboundedProblem
@@ -37,7 +39,7 @@ class SymbolicTableau:
         return dataclasses.replace(self)
 
     def _check_branch(self, new_constraint):
-        assert new_constraint.free_symbols <= self.sym_vars
+        assert new_constraint.free_symbols <= self.sym_vars, new_constraint
         if new_constraint in self.constraints:
             return None
 
@@ -91,14 +93,15 @@ class SymbolicTableau:
 
     def find_pivot_column(self):
         objective_coeffs = self._get_obj_coeffs()
+        random.shuffle(objective_coeffs)
         for j, coeff in objective_coeffs:
             coeff = coeff.rewrite(Add, evaluate=False)
-            expr = coeff <= -EPS
-            if isinstance(expr, sp.Expr):
-                if self._check_branch(expr):
+            is_neg = coeff <= -EPS
+            if isinstance(is_neg, Relational):
+                if self._check_branch(is_neg):
                     return j, coeff
-            elif isinstance(expr, Boolean):
-                return (j, coeff) if bool(expr) else None
+            elif isinstance(is_neg, Boolean):
+                return (j, coeff) if bool(is_neg) else None
             else:
                 raise NotImplementedError
 
@@ -127,14 +130,16 @@ def solve(tableau):
     explored: set[sp.Expr] = set()
     branches: list[sp.Expr] = []
 
-    for i in range(10):
+    for i in range(100):
+        # TODO there needs to be some randomization in the pivot column selection
+        # but it needs to play with backup
         if piv_col_idx_coeff := tableau.find_pivot_column():
             piv_col_idx, coeff = piv_col_idx_coeff
-            branches.append((coeff, tableau))
-            branch_tab = tableau.branch_lt(coeff)
-            piv_row_idx = branch_tab.find_pivot_row(piv_col_idx)
-            branch_tab.pivot(piv_row_idx, piv_col_idx)
-            tableau = branch_tab
+            if coeff.free_symbols:
+                branches.append((coeff, tableau))
+                tableau = tableau.branch_lt(coeff)
+            piv_row_idx = tableau.find_pivot_row(piv_col_idx)
+            tableau.pivot(piv_row_idx, piv_col_idx)
             # print("tab", tab)
         else:
             print(
@@ -152,4 +157,5 @@ def solve(tableau):
                 explored.add(last_expr)
                 branches.append((last_expr, tab))
                 right = tab.branch_ge(last_expr)
-                tableau = right
+                if right is not None:
+                    tableau = right

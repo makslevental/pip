@@ -100,7 +100,7 @@ def build_tableau_from_eqns(
         **{
             "minimize" if minimize else "maximize": objective,
             "subject_to": constraints,
-            "use_symbols": use_symbols,
+            "use_symbols": False,
         }
     )
 
@@ -157,7 +157,7 @@ def make_constraints_from_eqns(eqns, domain_vars, range_var, use_symbols):
             continue
 
         all_one_side = eqn.lhs - eqn.rhs
-        coeffs, constant = get_var_coeffs(all_one_side, vars)
+        coeffs, constant = get_var_coeffs(all_one_side, domain_vars)
         if use_symbols:
             coeffs = [sym * coeff for sym, coeff in coeffs]
         else:
