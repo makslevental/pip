@@ -1,14 +1,13 @@
 import time
-from pprint import pformat, pprint
+from pprint import pformat
 
-import numpy as np
-import sympy as sp
 import cvxpy as cp
 import matplotlib.pyplot as plt
-
+import numpy as np
+import sympy as sp
 import torch
-from torch import nn
 import torch.nn.functional as F
+from torch import nn
 
 from shapes.shape_infer import (
     make_shape_stuff,
@@ -16,7 +15,7 @@ from shapes.shape_infer import (
     get_tensor_live_ranges,
     get_constraints,
 )
-from symbolics.symbol import SymbolicTableau, solve
+from symbolics.symbol import AugmentedSymbolicTableau, solve
 from symbolics.util import build_tableau_from_eqns
 
 
@@ -232,11 +231,19 @@ def test_net_pip():
         mem_j = tensor_ssa_to_sympy_expr[ids[j]]
 
         # offset_i - offset_j - z_ij * M <= -mem_i
-        A[2 * z_idx, i], A[2 * z_idx, j], A[2 * z_idx, len(offsets) + z_idx] = offsets[i], -offsets[j], -z * M
+        A[2 * z_idx, i], A[2 * z_idx, j], A[2 * z_idx, len(offsets) + z_idx] = (
+            offsets[i],
+            -offsets[j],
+            -z * M,
+        )
         b[2 * z_idx] = -rhss.get(mem_i, mem_i)
 
         # offset_j - offset_j - (1 - z_ij) * M <= -mem_j
-        A[2 * z_idx + 1, j], A[2 * z_idx + 1, i], A[2 * z_idx + 1, len(offsets) + z_idx] = offsets[j], -offsets[i], -(1 - z) * M
+        (
+            A[2 * z_idx + 1, j],
+            A[2 * z_idx + 1, i],
+            A[2 * z_idx + 1, len(offsets) + z_idx],
+        ) = (offsets[j], -offsets[i], -(1 - z) * M)
         b[2 * z_idx + 1] = -rhss.get(mem_j, mem_j)
 
     # originally we were minimizing (hence just sum), but now we're maximizing (hence negative sum)
@@ -265,48 +272,11 @@ def test_net_pip():
         range_var=result,
         symbol_vars=tuple(symbol_vars),
         minimize=True,
-        use_symbols=True,
+        use_symbols=False,
     )
 
-    tab = SymbolicTableau(tableau, set(dual_domain_vars), set(symbol_vars))
+    tab = AugmentedSymbolicTableau(tableau, tuple(dual_domain_vars), tuple(symbol_vars))
     solve(tab)
-
-    # obj = cp.Minimize(cp.sum(list(offsets.values())))
-    # assert obj.is_dpp()
-    #
-    # prob = cp.Problem(obj, constraints)
-    # assert prob.is_dcp(dpp=True)
-    # print(cp.installed_solvers())
-    # times = []
-    # new_problem_times = []
-    #
-    # xs = range(20)
-    # for _ in xs:
-    #     for p in params.values():
-    #         p.value = np.random.randint(1, 10)
-    #
-    #     start = time.time()
-    #     prob.solve(solver=cp.GUROBI, verbose=True, warm_start=True)
-    #     # prob.solve(solver=cp.GLPK_MI, verbose=True, warm_start=True)
-    #     end = time.time()
-    #     times.append(end - start)
-    #     new_problem = cp.Problem(obj, constraints)
-    #     start = time.time()
-    #     new_problem.solve(solver=cp.GUROBI, verbose=True, warm_start=True)
-    #     # new_problem.solve(solver=cp.GLPK_MI, verbose=True, warm_start=True)
-    #     end = time.time()
-    #     new_problem_times.append(end - start)
-    #
-    # plt.rc("font", family="serif")
-    # plt.figure(figsize=(6, 6), dpi=300)
-    # plt.plot(xs, times, label="Re-solving a DPP problem")
-    # plt.plot(xs, new_problem_times, label="Solving a new problem")
-    # plt.xticks(xs, list(map(int, xs)))
-    # plt.xlabel(r"trials", fontsize=16)
-    # plt.ylabel(r"time (s)", fontsize=16)
-    # plt.legend()
-    # plt.yscale("log")
-    # plt.savefig("../docs/dpp1.png")
 
 
 if __name__ == "__main__":

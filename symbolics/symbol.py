@@ -5,8 +5,8 @@ from pprint import pformat
 
 import numpy as np
 import sympy as sp
+from numpy.linalg import inv
 from sympy import Add
-from sympy.core.numbers import IntegerConstant
 from sympy.core.relational import Relational
 from sympy.logic.boolalg import Boolean
 
@@ -21,12 +21,11 @@ EPS = 1
 
 
 @dataclass
-class SymbolicTableau:
+class AugmentedSymbolicTableau:
     tableau: sp.Matrix
-    domain_vars: set[sp.Symbol]
-    sym_vars: set[sp.Symbol]
+    domain_vars: tuple[sp.Symbol]
+    sym_vars: tuple[sp.Symbol]
     constraints: dict[sp.Expr] = field(default_factory=lambda: {})
-    parent: "SymbolicTableau" = field(default_factory=lambda: None, repr=False)
     use_symbols: bool = field(default_factory=lambda: True, repr=False)
 
     def __str__(self):
@@ -38,8 +37,17 @@ class SymbolicTableau:
     def copy(self):
         return dataclasses.replace(self)
 
+    def get_unaug_tableau(self):
+        return (
+            self.tableau[:-1, : len(self.domain_vars)],
+            self.tableau[:-1, -1],
+            self.tableau[-1, : len(self.domain_vars)].subs(
+                {s: 1 for s in self.sym_vars}
+            ),
+        )
+
     def _check_branch(self, new_constraint):
-        assert new_constraint.free_symbols <= self.sym_vars, new_constraint
+        assert new_constraint.free_symbols <= set(self.sym_vars), new_constraint
         if new_constraint in self.constraints:
             return None
 
@@ -47,7 +55,7 @@ class SymbolicTableau:
         constraints[new_constraint] = True
         if check_constraints_feasible(
             list(constraints.keys()),
-            list(self.sym_vars),
+            self.sym_vars,
         ):
             return constraints
         else:
@@ -59,7 +67,6 @@ class SymbolicTableau:
             lt = dataclasses.replace(
                 self,
                 constraints=constraints,
-                parent=self,
             )
             return lt
         else:
@@ -71,7 +78,6 @@ class SymbolicTableau:
             ge = dataclasses.replace(
                 self,
                 constraints=constraints,
-                parent=self,
             )
             return ge
         else:
@@ -125,10 +131,37 @@ class SymbolicTableau:
         tableau = symbolic_pivot(self.tableau, piv_row_idx, piv_col_idx)
         self.tableau = tableau
 
+    def _get_basic_columns(self):
+        A = np.array(self.tableau[:-1, :-1])
+        basic_cols = np.apply_along_axis(
+            lambda col: col.nonzero()[0] if sum(col) == 1 else -1, 0, A == 1
+        )[0]
+        return {
+            col_idx: row_idx
+            for col_idx, row_idx in enumerate(basic_cols)
+            if row_idx != -1
+        }
+
+    def get_current_soln(self):
+        basic_cols = self._get_basic_columns()
+        soln = []
+        for i, _domain_var in enumerate(self.domain_vars):
+            if i in basic_cols:
+                val = self.tableau[basic_cols[i], -1]
+            else:
+                val = 0
+            soln.append(val)
+
+        return soln
+
 
 def solve(tableau):
     explored: set[sp.Expr] = set()
     branches: list[sp.Expr] = []
+    to_int = np.vectorize(int)
+    orig_tableau, orig_b, orig_c = map(
+        lambda x: to_int(np.array(x)), tableau.get_unaug_tableau()
+    )
 
     for i in range(100):
         # TODO there needs to be some randomization in the pivot column selection
@@ -147,7 +180,13 @@ def solve(tableau):
                 tableau.constraints.keys(),
                 tableau[-1, -1],
             )
-
+            # https://math.stackexchange.com/questions/2818217/how-obtain-the-dual-variables-value-given-a-primal-solution
+            # https://www.matem.unam.mx/~omar/math340/comp-slack.html
+            current_soln = np.array(tableau.get_current_soln())
+            tight_constraints = ((orig_tableau @ current_soln) == orig_b.T)[0]
+            dual_soln = inv(orig_tableau[tight_constraints].T) @ orig_c[0]
+            print(current_soln)
+            print(dual_soln)
             # backtrack
             if branches:
                 last_expr, tab = branches.pop()

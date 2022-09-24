@@ -1,8 +1,8 @@
 import sympy as sp
 from sympy import pprint as sym_pprint
 
-from simplex import linprog, disp_tableau, find_pivot, sweep, UnboundedProblem
-from symbol import EPS, SymbolicTableau, solve
+from simplex import linprog
+from symbol import EPS, AugmentedSymbolicTableau, solve
 from util import check_constraints_feasible, build_tableau_from_eqns_str
 
 
@@ -64,7 +64,7 @@ def test_manual_tree():
         use_symbols=False,
     )
 
-    tab1 = SymbolicTableau(tableau, set(domain_vars), {x1, x2})
+    tab1 = AugmentedSymbolicTableau(tableau, set(domain_vars), {x1, x2})
     print("start tab", tab1)
 
     piv_col_idx, coeff = tab1.get_obj_coeff(col=0)
@@ -168,12 +168,12 @@ def test_auto_tree():
         use_symbols=False,
     )
 
-    tab = SymbolicTableau(tableau, set(domain_vars), {x1, x2})
+    tab = AugmentedSymbolicTableau(tableau, domain_vars, (x1, x2))
     solve(tab)
 
 
 if __name__ == "__main__":
-    test_build_tableau_from_eqns()
-    test_check_constraint_checker()
-    test_manual_tree()
+    # test_build_tableau_from_eqns()
+    # test_check_constraint_checker()
+    # test_manual_tree()
     test_auto_tree()
