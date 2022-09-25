@@ -205,7 +205,7 @@ def test_net_pip():
     )
 
     tab = AugmentedSymbolicTableau(tableau, dual_domain_vars, symbol_vars)
-    solve(tab, num_dual_vars=len(domain_vars))
+    solve(tab)
 
 
 if __name__ == "__main__":

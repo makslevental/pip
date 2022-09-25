@@ -44,9 +44,11 @@ class AugmentedSymbolicTableau:
     sym_vars: tuple[sp.Symbol]
     constraints: dict[sp.Expr] = field(default_factory=lambda: {})
     use_symbols: bool = field(default_factory=lambda: True, repr=False)
+    a: np.array = None
 
     def __str__(self):
-        return str(np.array(self.tableau))
+        self.a = np.array(self.tableau)
+        return pformat(self)
 
     def __getitem__(self, item):
         return self.tableau[item]
@@ -107,7 +109,7 @@ class AugmentedSymbolicTableau:
 
     def find_pivot_column(self):
         objective_coeffs = self._get_obj_coeffs()
-        # random.shuffle(objective_coeffs)
+        random.shuffle(objective_coeffs)
         for j, coeff in objective_coeffs:
             coeff = coeff.rewrite(Add, evaluate=False)
             is_neg = coeff <= -EPS
@@ -126,15 +128,17 @@ class AugmentedSymbolicTableau:
         piv_col = self.tableau[:-1, col_idx]
         if self.use_symbols:
             piv_col = unitize_syms(piv_col, self.domain_vars)
-        if all(a <= 0 for a in piv_col):
-            raise UnboundedProblem
+        if all(a < 0 for a in piv_col):
+            raise UnboundedProblem(piv_col)
         sol_col = self.tableau[:-1, -1]
         if self.use_symbols:
             sol_col = unitize_syms(sol_col, self.tableau.free_symbols)
         ratios = [a / b if b > 0 else sp.oo for a, b in zip(sol_col, piv_col)]
         piv_row_idx = np.argmin(ratios)
-        assert ratios[piv_row_idx] != sp.oo
-        return piv_row_idx
+        if ratios[piv_row_idx] == sp.oo:
+            return None
+        else:
+            return piv_row_idx
 
     def pivot(self, piv_row_idx, piv_col_idx):
         self.tableau = symbolic_pivot(self.tableau, piv_row_idx, piv_col_idx)
@@ -170,14 +174,13 @@ class AugmentedSymbolicTableau:
         return soln
 
 
-def solve(tableau, num_dual_vars):
+def solve(tableau):
     explored: set[sp.Expr] = set()
     branches: list[sp.Expr] = []
     to_int = np.vectorize(int)
     # hack
-    assert num_dual_vars == tableau.tableau.rows - 1
 
-    for i in range(100):
+    for i in range(1000):
         # TODO there needs to be some randomization in the pivot column selection
         # but it needs to play with backup
         if piv_col_idx_coeff := tableau.find_pivot_column():
@@ -186,7 +189,10 @@ def solve(tableau, num_dual_vars):
                 branches.append((coeff, tableau))
                 tableau = tableau.branch_lt(coeff)
             piv_row_idx = tableau.find_pivot_row(piv_col_idx)
-            tableau.pivot(piv_row_idx, piv_col_idx)
+            if piv_row_idx is None:
+                continue
+            else:
+                tableau.pivot(piv_row_idx, piv_col_idx)
             # print("tab", tab)
         else:
             print(
@@ -199,7 +205,7 @@ def solve(tableau, num_dual_vars):
             # curr_tableau, curr_b, curr_c = map(
             #     lambda x: to_int(np.array(x)), tableau.get_unaug_tableau()
             # )
-            dual_soln = tableau.tableau[-1, num_dual_vars:-1]
+            # dual_soln = tableau.tableau[-1, num_dual_vars:-1]
             # print(str(dual_soln).replace("2147483647", "M"))
             # basic_cols = tableau._get_basic_columns()
             # orig_submatrix = to_int(orig_tableau[:-1, list(basic_cols.keys())])

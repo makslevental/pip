@@ -3,7 +3,7 @@ from pprint import pprint
 import sympy as sp
 import numpy as np
 
-from symbolics.util import build_tableau_from_eqns
+from symbolics.util import build_tableau_from_eqns, big_M
 
 
 def build_dual_problem(
@@ -29,65 +29,41 @@ def build_dual_problem(
         domain_vars.append(offsets[id])
 
     Z = {}
-    opp_Z = {}
     for i, j in overlapping_live_ranges_edge_list:
         if i >= j:
             continue
 
         Z[i, j] = sp.Symbol(name=f"z_{i}{j}", boolean=True)
-        opp_Z[i, j] = sp.Symbol(name=f"oppz_{i}{j}", boolean=True)
         domain_vars.append(Z[i, j])
-        domain_vars.append(opp_Z[i, j])
 
     # Maximize c'x subject to Ax ≤ b, x ≥ 0
-    big_M = np.iinfo(np.int32).max
-    # big_M = sp.Symbol("M")
-    num_constraints = 2 * (len(Z) + len(opp_Z))
-    num_vars = len(offsets) + len(Z) + len(opp_Z)
+    num_constraints = 2 * len(Z)
+    num_vars = len(offsets) + len(Z)
     A = sp.zeros(num_constraints, num_vars)
     b = sp.zeros(1, num_constraints)
     for constr_idx, ((i, j), z) in enumerate(Z.items()):
         mem_i = tensor_ssa_to_sympy_expr[live_range_ids_to_tensor_ssa[i]]
 
         # offset_i - offset_j - z_ij * M <= -mem_i
-        A[constr_idx, i], A[constr_idx, j], A[constr_idx, len(offsets) + constr_idx] = (
-            offsets[i],
-            -offsets[j],
-            -z * big_M,
-        )
+        (
+            A[constr_idx, i],
+            A[constr_idx, j],
+            A[constr_idx, len(offsets) + constr_idx],
+        ) = (offsets[i], -offsets[j], -z * big_M)
         b[constr_idx] = -rhss.get(mem_i, mem_i)
 
-    for constr_idx, ((i, j), oppz) in enumerate(opp_Z.items()):
+    for constr_idx, ((i, j), z) in enumerate(Z.items()):
         mem_j = tensor_ssa_to_sympy_expr[live_range_ids_to_tensor_ssa[j]]
         # offset_j - offset_j - (1 - z_ij) * M <= -mem_j
         # <=>
-        # offset_j - offset_j - opp_z_ij * M <= -mem_j
+        # # offset_j - offset_j - opp_z_ij * M <= -mem_j
+        # offset_j - offset_j + z_ij * M <= -mem_j + M
         (
             A[len(Z) + constr_idx, j],
             A[len(Z) + constr_idx, i],
-            A[len(Z) + constr_idx, len(offsets) + len(Z) + constr_idx],
-        ) = (offsets[j], -offsets[i], -oppz * big_M)
-        b[len(Z) + constr_idx] = -rhss.get(mem_j, mem_j)
-
-    for constr_idx, ((i, j), z) in enumerate(Z.items()):
-        oppz = opp_Z[i, j]
-        # opp_z_ij <= 1 - z_ij
-        # opp_z_ij + z_ij <= 1
-        (
-            A[2 * len(Z) + constr_idx, len(offsets) + len(Z) + constr_idx],
-            A[2 * len(Z) + constr_idx, len(offsets) + constr_idx],
-        ) = (oppz, z)
-        b[2 * len(Z) + constr_idx] = 1
-
-    for constr_idx, ((i, j), z) in enumerate(Z.items()):
-        oppz = opp_Z[i, j]
-        # opp_z_ij >= 1 - z_ij
-        # -opp_z_ij - z_ij <= -1
-        (
-            A[3 * len(Z) + constr_idx, len(offsets) + len(Z) + constr_idx],
-            A[3 * len(Z) + constr_idx, len(offsets) + constr_idx],
-        ) = (-oppz, -z)
-        b[3 * len(Z) + constr_idx] = -1
+            A[len(Z) + constr_idx, len(offsets) + constr_idx],
+        ) = (offsets[j], -offsets[i], z * big_M)
+        b[len(Z) + constr_idx] = -rhss.get(mem_j, mem_j) + big_M
 
     # originally we were minimizing (hence just sum), but now we're maximizing (hence negative sum)
     c = sp.zeros(num_vars, 1)

@@ -24,8 +24,8 @@ class SymplexError(Exception):
 
 
 class UnboundedProblem(SymplexError):
-    def __init__(self):
-        super(UnboundedProblem, self).__init__("unbouded")
+    def __init__(self, msg):
+        super(UnboundedProblem, self).__init__(f"unbouded, msg: {msg}")
 
 
 class NoFeasibleSolution(SymplexError):
@@ -154,7 +154,9 @@ def two_phase_simplex(tab):
     for tab in it.islice(simplex(tab, m=tab.rows - 2), 1, None):
         yield tab
     if tab[-1, -1] != 0:
-        raise NoFeasibleSolution(f"optimal value of first phase is non-zero: {tab[-1, -1]}")
+        raise NoFeasibleSolution(
+            f"optimal value of first phase is non-zero: {tab[-1, -1]}"
+        )
     for tab in it.islice(simplex(tab[:-1, :]), 1, None):
         yield tab
 
@@ -290,6 +292,13 @@ if __name__ == "__main__":
     A = [[1]]
     b = [-1]
     x0_bounds = (None, None)
-    res = scipy_linprog(c=c, A_ub=A, b_ub=b, bounds=[x0_bounds], method="simplex", options={"presolve": False})
+    res = scipy_linprog(
+        c=c,
+        A_ub=A,
+        b_ub=b,
+        bounds=[x0_bounds],
+        method="simplex",
+        options={"presolve": False},
+    )
     print(res.fun)
     print(res.x)

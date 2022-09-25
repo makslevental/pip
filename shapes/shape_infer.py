@@ -409,8 +409,12 @@ def get_constraints(tensor_ssa_to_sizes, shape_sym_to_formula, live_ranges):
         id: tensor
         for id, tensor in zip(np.arange(len(live_ranges)), live_ranges.keys())
     }
-    starts = np.array([live_ranges[tensor][0] for tensor in live_range_ids_to_tensor_ssa.values()])
-    ends = np.array([live_ranges[tensor][1] for tensor in live_range_ids_to_tensor_ssa.values()])
+    starts = np.array(
+        [live_ranges[tensor][0] for tensor in live_range_ids_to_tensor_ssa.values()]
+    )
+    ends = np.array(
+        [live_ranges[tensor][1] for tensor in live_range_ids_to_tensor_ssa.values()]
+    )
     live_range_ncls = NCLS(
         starts=starts,
         ends=ends + 1,
@@ -423,6 +427,12 @@ def get_constraints(tensor_ssa_to_sizes, shape_sym_to_formula, live_ranges):
             indexes=np.array(list(live_range_ids_to_tensor_ssa.keys())),
         )
     )
-    overlapping_live_ranges_edge_list = overlapping_live_ranges_edge_list.T.astype(order="C", dtype=overlapping_live_ranges_edge_list.dtype)
+    overlapping_live_ranges_edge_list = overlapping_live_ranges_edge_list.T.astype(
+        order="C", dtype=overlapping_live_ranges_edge_list.dtype
+    )
 
-    return tensor_ssa_to_sympy_expr, live_range_ids_to_tensor_ssa, overlapping_live_ranges_edge_list
+    return (
+        tensor_ssa_to_sympy_expr,
+        live_range_ids_to_tensor_ssa,
+        overlapping_live_ranges_edge_list,
+    )

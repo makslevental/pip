@@ -9,6 +9,8 @@ from sympy.solvers.solveset import linear_coeffs
 
 from symbolics.simplex import linprog
 
+big_M = 1e9
+
 
 def check_constraints_feasible(constraints, sym_vars):
     A, b = linear_ineq_to_matrix(constraints, sym_vars)
@@ -21,15 +23,12 @@ def check_constraints_feasible(constraints, sym_vars):
     # hence the original system is feasible
     # if there's a solution and it's negative then the original system
     # isn't feasible
-    # if there's no solution because it's negative unbounded then
-    # there exists a negative solution and therefore
-    # the original solution isn't feasible
     res = scipy_linprog(
         b.T,
         A_eq=A.T,
         b_eq=np.zeros(len(A.T)),
         method="highs",
-        bounds=[(0, None)],
+        bounds=[(0, big_M - 1)],
         integrality=np.ones(len(b)),
     )
     if res.success:
@@ -39,7 +38,7 @@ def check_constraints_feasible(constraints, sym_vars):
             return False
     else:
         assert "At lower/fixed bound" in res.message
-        return False
+        return True
 
 
 def unitize_syms(expr, vars):
