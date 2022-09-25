@@ -10,24 +10,6 @@ from sympy.solvers.solveset import linear_coeffs
 from symbolics.simplex import linprog
 
 
-def symbolic_pivot(tableau, piv_row_idx, piv_col_idx):
-    M = tableau.copy()
-    piv_val = M[piv_row_idx, piv_col_idx]
-    piv_row = M[piv_row_idx, :] / piv_val
-    for i in range(M.rows):
-        if i == piv_row_idx:
-            continue
-        M[i, :] -= piv_row * M[i, piv_col_idx]
-        if M[i, -1].could_extract_minus_sign():
-            M[i, :] *= -1
-        M[i, :] = sp.simplify(M[i, :])
-
-    M[piv_row_idx, :] = piv_row * (
-        piv_val.free_symbols.pop() if piv_val.free_symbols else 1
-    )
-    return M
-
-
 def check_constraints_feasible(constraints, sym_vars):
     A, b = linear_ineq_to_matrix(constraints, sym_vars)
     A = np.array(A).astype(int)

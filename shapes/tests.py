@@ -9,6 +9,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
+from shapes.dsa import build_dual_problem
 from shapes.shape_infer import (
     make_shape_stuff,
     simplify_with_mathematica,
@@ -173,110 +174,38 @@ class Net(nn.Module):
         super().__init__()
         self.conv1 = nn.Conv2d(3, 6, 5)
         self.pool = nn.MaxPool2d(2, 2)
-        self.conv2 = nn.Conv2d(6, 16, 5)
-        self.fc1 = nn.Linear(16 * 5 * 5, 120)
-        self.fc2 = nn.Linear(120, 84)
-        self.fc3 = nn.Linear(84, 10)
+        # self.conv2 = nn.Conv2d(6, 16, 5)
+        # self.fc1 = nn.Linear(16 * 5 * 5, 120)
+        # self.fc2 = nn.Linear(120, 84)
+        # self.fc3 = nn.Linear(84, 10)
 
     def forward(self, x):
         x = self.pool(F.relu(self.conv1(x)))
-        x = self.pool(F.relu(self.conv2(x)))
-        x = torch.flatten(x, 1)  # flatten all dimensions except batch
-        x = F.relu(self.fc1(x))
-        x = F.relu(self.fc2(x))
-        x = self.fc3(x)
+        # x = self.pool(F.relu(self.conv2(x)))
+        # x = torch.flatten(x, 1)  # flatten all dimensions except batch
+        # x = F.relu(self.fc1(x))
+        # x = F.relu(self.fc2(x))
+        # x = self.fc3(x)
         return x
 
 
 def test_net_pip():
     model = Net()
     tensor_ssa_to_sizes, shape_sym_to_formula, live_ranges = test_vision_model(model)
-    tensor_ssa_to_sympy_expr, ids, edge_list = get_constraints(
-        tensor_ssa_to_sizes, shape_sym_to_formula, live_ranges
+    (
+        tensor_ssa_to_sympy_expr,
+        live_range_ids_to_tensor_ssa,
+        overlapping_live_ranges_edge_list,
+    ) = get_constraints(tensor_ssa_to_sizes, shape_sym_to_formula, live_ranges)
+
+    tableau, domain_vars, dual_domain_vars, symbol_vars = build_dual_problem(
+        live_range_ids_to_tensor_ssa,
+        tensor_ssa_to_sympy_expr,
+        overlapping_live_ranges_edge_list,
     )
 
-    rhss = {}
-    symbol_vars = set()
-    for id, tensor in ids.items():
-        size_expr = tensor_ssa_to_sympy_expr[tensor]
-        if size_expr.free_symbols:
-            rhs = sp.Symbol(name=f"θ_{id}")
-            rhss[size_expr] = rhs
-            symbol_vars.add(rhs)
-
-    for size_expr, rhs in rhss.items():
-        print(f"{size_expr=} {rhs=}")
-    domain_vars = set()
-    Z = {}
-    offsets = {}
-    for id in ids.keys():
-        offsets[id] = sp.Symbol(integer=True, name=f"offset_{id}")
-        domain_vars.add(offsets[id])
-
-    M = 1e9
-    for i, j in edge_list:
-        if i >= j:
-            continue
-
-        Z[i, j] = sp.Symbol(name=f"z_{i}{j}", boolean=True)
-        domain_vars.add(Z[i, j])
-
-    # Maximize c'x subject to Ax ≤ b, x ≥ 0
-    num_constraints = 2 * len(Z)
-    num_vars = len(offsets) + len(Z)
-    A = sp.zeros(num_constraints, num_vars)
-    b = sp.zeros(1, num_constraints)
-    for z_idx, ((i, j), z) in enumerate(Z.items()):
-        mem_i = tensor_ssa_to_sympy_expr[ids[i]]
-        mem_j = tensor_ssa_to_sympy_expr[ids[j]]
-
-        # offset_i - offset_j - z_ij * M <= -mem_i
-        A[2 * z_idx, i], A[2 * z_idx, j], A[2 * z_idx, len(offsets) + z_idx] = (
-            offsets[i],
-            -offsets[j],
-            -z * M,
-        )
-        b[2 * z_idx] = -rhss.get(mem_i, mem_i)
-
-        # offset_j - offset_j - (1 - z_ij) * M <= -mem_j
-        (
-            A[2 * z_idx + 1, j],
-            A[2 * z_idx + 1, i],
-            A[2 * z_idx + 1, len(offsets) + z_idx],
-        ) = (offsets[j], -offsets[i], -(1 - z) * M)
-        b[2 * z_idx + 1] = -rhss.get(mem_j, mem_j)
-
-    # originally we were minimizing (hence just sum), but now we're maximizing (hence negative sum)
-    c = sp.zeros(num_vars, 1)
-    for i, offset in offsets.items():
-        c[i] = -offset
-
-    # set domain vars to 1
-    A = A.subs([(d, 1) for d in domain_vars])
-    b = b.subs([(d, 1) for d in domain_vars])
-    c = c.subs([(d, 1) for d in domain_vars])
-
-    # Minimize b'y subject to A'y ≥ c, y ≥ 0
-    y = sp.Matrix(num_constraints, 1, lambda i, j: sp.Symbol(f"y_{i}"))
-    dual_domain_vars = y.values()
-    result = sp.Symbol(name="result")
-    objective = sp.Eq(result, (b @ y)[0])
-    dual_constraints = [objective]
-    for dual_row_idx in range(A.T.rows):
-        dual_row = A.T.row(dual_row_idx)
-        dual_constraints.append((dual_row @ y)[0] >= c[dual_row_idx])
-
-    tableau, *_ = build_tableau_from_eqns(
-        dual_constraints,
-        domain_vars=tuple(dual_domain_vars),
-        range_var=result,
-        symbol_vars=tuple(symbol_vars),
-        minimize=True,
-        use_symbols=False,
-    )
-
-    tab = AugmentedSymbolicTableau(tableau, tuple(dual_domain_vars), tuple(symbol_vars))
-    solve(tab)
+    tab = AugmentedSymbolicTableau(tableau, dual_domain_vars, symbol_vars)
+    solve(tab, num_dual_vars=len(domain_vars))
 
 
 if __name__ == "__main__":

@@ -5,19 +5,36 @@ from pprint import pformat
 
 import numpy as np
 import sympy as sp
-from numpy.linalg import inv
-from sympy import Add
+from numpy.linalg import pinv, inv
+from sympy import Add, pprint
 from sympy.core.relational import Relational
 from sympy.logic.boolalg import Boolean
 
 from symbolics.simplex import UnboundedProblem
 from symbolics.util import (
-    symbolic_pivot,
     check_constraints_feasible,
     unitize_syms,
 )
 
 EPS = 1
+
+
+def symbolic_pivot(tableau, piv_row_idx, piv_col_idx):
+    M = tableau.copy()
+    piv_val = M[piv_row_idx, piv_col_idx]
+    piv_row = M[piv_row_idx, :] / piv_val
+    for i in range(M.rows):
+        if i == piv_row_idx:
+            continue
+        M[i, :] -= piv_row * M[i, piv_col_idx]
+        if M[i, -1].could_extract_minus_sign():
+            M[i, :] *= -1
+        M[i, :] = sp.simplify(M[i, :])
+
+    M[piv_row_idx, :] = piv_row * (
+        piv_val.free_symbols.pop() if piv_val.free_symbols else 1
+    )
+    return M
 
 
 @dataclass
@@ -29,22 +46,13 @@ class AugmentedSymbolicTableau:
     use_symbols: bool = field(default_factory=lambda: True, repr=False)
 
     def __str__(self):
-        return pformat(self)
+        return str(np.array(self.tableau))
 
     def __getitem__(self, item):
         return self.tableau[item]
 
     def copy(self):
         return dataclasses.replace(self)
-
-    def get_unaug_tableau(self):
-        return (
-            self.tableau[:-1, : len(self.domain_vars)],
-            self.tableau[:-1, -1],
-            self.tableau[-1, : len(self.domain_vars)].subs(
-                {s: 1 for s in self.sym_vars}
-            ),
-        )
 
     def _check_branch(self, new_constraint):
         assert new_constraint.free_symbols <= set(self.sym_vars), new_constraint
@@ -99,7 +107,7 @@ class AugmentedSymbolicTableau:
 
     def find_pivot_column(self):
         objective_coeffs = self._get_obj_coeffs()
-        random.shuffle(objective_coeffs)
+        # random.shuffle(objective_coeffs)
         for j, coeff in objective_coeffs:
             coeff = coeff.rewrite(Add, evaluate=False)
             is_neg = coeff <= -EPS
@@ -107,7 +115,8 @@ class AugmentedSymbolicTableau:
                 if self._check_branch(is_neg):
                     return j, coeff
             elif isinstance(is_neg, Boolean):
-                return (j, coeff) if bool(is_neg) else None
+                if bool(is_neg):
+                    return j, coeff
             else:
                 raise NotImplementedError
 
@@ -128,14 +137,20 @@ class AugmentedSymbolicTableau:
         return piv_row_idx
 
     def pivot(self, piv_row_idx, piv_col_idx):
-        tableau = symbolic_pivot(self.tableau, piv_row_idx, piv_col_idx)
-        self.tableau = tableau
+        self.tableau = symbolic_pivot(self.tableau, piv_row_idx, piv_col_idx)
+
+    @staticmethod
+    def _check_basic_col(col):
+        nonz = col.nonzero()[0]
+        if len(nonz) == 1 and col[nonz[0]] == 1:
+            return nonz[0]
+        else:
+            return -1
 
     def _get_basic_columns(self):
         A = np.array(self.tableau[:-1, :-1])
-        basic_cols = np.apply_along_axis(
-            lambda col: col.nonzero()[0] if sum(col) == 1 else -1, 0, A == 1
-        )[0]
+        basic_cols = np.apply_along_axis(self._check_basic_col, 0, A)
+        assert sum(basic_cols > -1) == A.shape[0]
         return {
             col_idx: row_idx
             for col_idx, row_idx in enumerate(basic_cols)
@@ -155,13 +170,12 @@ class AugmentedSymbolicTableau:
         return soln
 
 
-def solve(tableau):
+def solve(tableau, num_dual_vars):
     explored: set[sp.Expr] = set()
     branches: list[sp.Expr] = []
     to_int = np.vectorize(int)
-    orig_tableau, orig_b, orig_c = map(
-        lambda x: to_int(np.array(x)), tableau.get_unaug_tableau()
-    )
+    # hack
+    assert num_dual_vars == tableau.tableau.rows - 1
 
     for i in range(100):
         # TODO there needs to be some randomization in the pivot column selection
@@ -177,16 +191,34 @@ def solve(tableau):
         else:
             print(
                 "answer",
-                tableau.constraints.keys(),
+                str(tableau.constraints.keys()).replace("2147483647", "M"),
                 tableau[-1, -1],
             )
             # https://math.stackexchange.com/questions/2818217/how-obtain-the-dual-variables-value-given-a-primal-solution
             # https://www.matem.unam.mx/~omar/math340/comp-slack.html
-            current_soln = np.array(tableau.get_current_soln())
-            tight_constraints = ((orig_tableau @ current_soln) == orig_b.T)[0]
-            dual_soln = inv(orig_tableau[tight_constraints].T) @ orig_c[0]
-            print(current_soln)
-            print(dual_soln)
+            # curr_tableau, curr_b, curr_c = map(
+            #     lambda x: to_int(np.array(x)), tableau.get_unaug_tableau()
+            # )
+            dual_soln = tableau.tableau[-1, num_dual_vars:-1]
+            # print(str(dual_soln).replace("2147483647", "M"))
+            # basic_cols = tableau._get_basic_columns()
+            # orig_submatrix = to_int(orig_tableau[:-1, list(basic_cols.keys())])
+            # orig_sub_c = orig_tableau[-1, list(basic_cols.keys())]
+            # dual_soln = sp.Matrix(orig_sub_c @ inv(orig_submatrix))
+            # pprint(dual_soln)
+            # print(current_soln)
+            # dual_tableau = orig_tableau.T
+            #
+            # # complementary_slackness => non-zero => no slack in dual constraints
+            # tight_dual_constraints = dual_tableau[current_soln > 0]
+            #
+            # # complementary_slackness => slack original constraint => dual variable = 0
+            # # thus drop those columns
+            # slack_orig_constraints = ((orig_tableau @ current_soln) < orig_b.T)[0]
+            # reduced_dual_tableau = tight_dual_constraints[:, ~slack_orig_constraints]
+            #
+            # dual_soln = pinv(reduced_dual_tableau) @ orig_c[0]
+            # print(dual_soln)
             # backtrack
             if branches:
                 last_expr, tab = branches.pop()
