@@ -16,8 +16,8 @@ from shapes.shape_infer import (
     get_tensor_live_ranges,
     get_constraints,
 )
-from symbolics.symbol import AugmentedSymbolicTableau, solve
-from symbolics.util import build_tableau_from_eqns
+from symbolics.symbolic_simplex import solve
+import symbolics.symbolic_simplex
 
 
 def test_conv2d():
@@ -204,8 +204,9 @@ def test_net_pip():
         overlapping_live_ranges_edge_list,
     )
 
-    tab = AugmentedSymbolicTableau(tableau, dual_domain_vars, symbol_vars)
-    solve(tab)
+    symbolics.symbolic_simplex.sym_vars = symbol_vars
+    for sol in solve(tableau):
+        pass
 
 
 if __name__ == "__main__":

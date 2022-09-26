@@ -1,5 +1,6 @@
 import dataclasses
 import random
+import warnings
 from dataclasses import dataclass, field
 from pprint import pformat
 
@@ -14,9 +15,10 @@ from symbolics.simplex import UnboundedProblem
 from symbolics.util import (
     check_constraints_feasible,
     unitize_syms,
+    big_M,
 )
 
-EPS = 1
+EPS = 0
 
 
 def symbolic_pivot(tableau, piv_row_idx, piv_col_idx):
@@ -44,10 +46,8 @@ class AugmentedSymbolicTableau:
     sym_vars: tuple[sp.Symbol]
     constraints: dict[sp.Expr] = field(default_factory=lambda: {})
     use_symbols: bool = field(default_factory=lambda: True, repr=False)
-    a: np.array = None
 
     def __str__(self):
-        self.a = np.array(self.tableau)
         return pformat(self)
 
     def __getitem__(self, item):
@@ -57,7 +57,9 @@ class AugmentedSymbolicTableau:
         return dataclasses.replace(self)
 
     def _check_branch(self, new_constraint):
-        assert new_constraint.free_symbols <= set(self.sym_vars), new_constraint
+        assert new_constraint.free_symbols <= set(self.sym_vars) | {
+            big_M
+        }, new_constraint
         if new_constraint in self.constraints:
             return None
 
@@ -73,7 +75,7 @@ class AugmentedSymbolicTableau:
 
     def branch_lt(self, expr):
         expr = expr.rewrite(Add, evaluate=False)
-        if constraints := self._check_branch(expr <= -EPS):
+        if constraints := self._check_branch(expr < -EPS):
             lt = dataclasses.replace(
                 self,
                 constraints=constraints,
@@ -109,10 +111,12 @@ class AugmentedSymbolicTableau:
 
     def find_pivot_column(self):
         objective_coeffs = self._get_obj_coeffs()
-        random.shuffle(objective_coeffs)
+        # random.shuffle(objective_coeffs)
         for j, coeff in objective_coeffs:
             coeff = coeff.rewrite(Add, evaluate=False)
-            is_neg = coeff <= -EPS
+            if coeff.free_symbols == {big_M}:
+                continue
+            is_neg = coeff < -EPS
             if isinstance(is_neg, Relational):
                 if self._check_branch(is_neg):
                     return j, coeff
@@ -126,6 +130,7 @@ class AugmentedSymbolicTableau:
 
     def find_pivot_row(self, col_idx):
         piv_col = self.tableau[:-1, col_idx]
+        piv_col = piv_col.applyfunc(lambda x: sp.limit(x, big_M, sp.oo))
         if self.use_symbols:
             piv_col = unitize_syms(piv_col, self.domain_vars)
         if all(a < 0 for a in piv_col):
@@ -137,8 +142,9 @@ class AugmentedSymbolicTableau:
         piv_row_idx = np.argmin(ratios)
         if ratios[piv_row_idx] == sp.oo:
             return None
-        else:
-            return piv_row_idx
+        if ratios[piv_row_idx] == 0:
+            warnings.warn("0 pivot ratio")
+        return piv_row_idx
 
     def pivot(self, piv_row_idx, piv_col_idx):
         self.tableau = symbolic_pivot(self.tableau, piv_row_idx, piv_col_idx)
@@ -175,10 +181,11 @@ class AugmentedSymbolicTableau:
 
 
 def solve(tableau):
+    print()
+    sp.pprint(tableau.tableau, wrap_line=False)
+    print()
     explored: set[sp.Expr] = set()
     branches: list[sp.Expr] = []
-    to_int = np.vectorize(int)
-    # hack
 
     for i in range(1000):
         # TODO there needs to be some randomization in the pivot column selection
@@ -195,9 +202,12 @@ def solve(tableau):
                 tableau.pivot(piv_row_idx, piv_col_idx)
             # print("tab", tab)
         else:
+            print()
+            sp.pprint(tableau.tableau, wrap_line=False)
+            print()
             print(
                 "answer",
-                str(tableau.constraints.keys()).replace("2147483647", "M"),
+                list(tableau.constraints.keys()),
                 tableau[-1, -1],
             )
             # https://math.stackexchange.com/questions/2818217/how-obtain-the-dual-variables-value-given-a-primal-solution
@@ -230,6 +240,8 @@ def solve(tableau):
                 last_expr, tab = branches.pop()
                 while branches and explored and last_expr in explored:
                     last_expr, tab = branches.pop()
+                if last_expr in explored:
+                    break
 
                 explored.add(last_expr)
                 branches.append((last_expr, tab))

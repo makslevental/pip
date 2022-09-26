@@ -1,6 +1,4 @@
 import itertools as it
-
-from scipy.optimize import linprog as scipy_linprog
 import re
 import sys
 from functools import reduce
@@ -11,6 +9,9 @@ from IPython.display import Latex, display
 from sympy import init_printing, latex
 
 # init_session(quiet=True)
+from sympy.core.relational import Relational, Eq
+
+from symbolics.util import check_constraints_feasible, big_M
 
 init_printing(use_latex=True)
 
@@ -83,29 +84,65 @@ def sweep(tab, pivot):
     return tab
 
 
-def find_pivot(tab, m=None):
+branches_taken = []
+explored = set()
+sym_vars = None
+
+
+def candidate_pivot_cols_avail(tab):
+    minn = None
+    for j, c in enumerate(tab[-1, :-1]):
+        if c.free_symbols and check_constraints_feasible(
+            [c for c, _tab in branches_taken] + [c < 0], sym_vars
+        ):
+            branches_taken.append((c < 0, tab))
+            return (j, c), tab
+        elif not c.free_symbols and c < 0:
+            if minn is None:
+                minn = (j, c), tab
+            elif c < minn[1]:
+                minn = (j, c), tab
+
+    if minn is None:
+        print("branches_taken", end=" ")
+        sp.pprint([c for c, _tab in branches_taken])
+        sp.pprint(Eq(sp.Symbol("soln"), -tab[-1, -1]))
+        print()
+
+        while True:
+            if not branches_taken:
+                break
+
+            expr, tab = branches_taken.pop()
+            assert isinstance(expr, Relational), expr
+            if expr in explored:
+                continue
+            ge = expr.lhs >= 0
+            if (
+                expr.rel_op == "<"
+                and ge not in explored
+                and check_constraints_feasible(
+                    [c for c, _tab in branches_taken] + [ge], sym_vars
+                )
+            ):
+                branches_taken.append((ge, tab))
+                return candidate_pivot_cols_avail(tab)
+            elif expr.rel_op == ">=":
+                explored.add(expr)
+
+    return minn, tab
+
+
+def find_pivot(j, tab, m=None):
     tab, m = normalize_tableau(tab, m)
     assert all(b >= 0 for b in tab[:m, -1])
-    j = np.argmin(tab[-1, :-1])
-    if tab[-1, j] >= 0:
-        return  # success
     if all(a <= 0 for a in tab[:m, j]):
-        raise UnboundedProblem
-    i = np.argmin([b / a if a > 0 else sp.oo for b, a in zip(tab[:m, -1], tab[:m, j])])
-    return i, j
-
-
-def find_dual_pivot(tab, m=None):
-    tab, m = normalize_tableau(tab, m)
-    assert all(c >= 0 for c in tab[-1, :-1])
-    i = np.argmin(tab[:-1, -1])
-
-    if all(a >= 0 for a in tab[i, :-1]):
-        raise NoFeasibleSolution("rows with all non-negative elements exist")
-    j = np.argmax(
-        [c / a if a < 0 else -sp.oo for c, a in zip(tab[-1, :-1], tab[i, :-1])]
-    )
-    return i, j
+        raise UnboundedProblem(tab[:m, j])
+    sol_col = tab[:m, -1]
+    piv_col = tab[:m, j]
+    piv_col = piv_col.applyfunc(lambda x: sp.limit(x, big_M, sp.oo))
+    i = np.argmin([b / a if a > 0 else sp.oo for b, a in zip(sol_col, piv_col)])
+    return (i, j), tab
 
 
 def simplex(tab, m=None):
@@ -113,10 +150,29 @@ def simplex(tab, m=None):
     if any(b < 0 for b in tab[:m, -1]):
         raise NoFeasibleSolution("rows with all non-negative elements exist")
     yield tab.copy()
-    while any(c < 0 for c in tab[-1, :-1]):
-        pivot = find_pivot(tab, m=m)
+    while j_c_tab := candidate_pivot_cols_avail(tab):
+        j_c, tab = j_c_tab
+        if j_c is None:
+            break
+        j, c = j_c
+        pivot, tab = find_pivot(j, tab, m=m)
         tab = sweep(tab, pivot)
+        # how to identify a leaf?
         yield tab.copy()
+
+
+def find_dual_pivot(tab, m=None):
+    tab, m = normalize_tableau(tab, m)
+    assert all(c >= 0 for c in tab[-1, :-1])
+    i = np.argmin(tab[:-1, -1])
+    if tab[i, -1] >= 0:
+        return  # success
+    if all(a >= 0 for a in tab[i, :-1]):
+        raise NoFeasibleSolution("rows with all non-negative elements exist")
+    j = np.argmax(
+        [c / a if a < 0 else -sp.oo for c, a in zip(tab[-1, :-1], tab[i, :-1])]
+    )
+    return i, j
 
 
 def dual_simplex(tab):
@@ -253,63 +309,3 @@ if __name__ == "__main__":
             ],
         )
     )
-
-    print_solution(linprog(
-        minimize=[350, 450, 240],
-        subject_to=[
-            ([2.5, 5, 3], '>=', 4),
-            ([5, 6, 2], '>=', 5),
-        ],
-    ))
-
-    print_solution(linprog(
-        minimize=[6, 5, -4],
-        subject_to=[
-            ([2, 3, 4], '>=', 200),
-            ([1, 1, 3], '>=', 150),
-            ([3, 1, 2], '<=', 100),
-        ],
-    ))
-
-    # print_solution(linprog(
-    #     minimize=[9, 5, 8],
-    #     subject_to=[
-    #         ([2.5, 3, 5], '>=', 200),
-    #         ([2.5, 2, 3], '>=', 160),
-    #         ([3, 1, 2], '>=', 120),
-    #         ([1, 1, 1], '<=', 50),
-    #     ],
-    # ), use_two_phase=True)
-
-    # print_solution(linprog(
-    #     minimize=[-1, -1],
-    #     subject_to=[
-    #         ([-5, 1], '<=', 0),
-    #         ([-1, 2], '<=', 9),
-    #         ([1, -5], '<=', 0),
-    #     ],
-    # ))
-
-    print_solution(linprog(
-        minimize=[1, 2, -1],
-        subject_to=[
-            ([3, 5, 1], '<=', 90),
-            ([1, -5, 3], '<=', 66),
-            ([2, 3, -1], '==', 6),
-        ],
-    ))
-
-    # c = [-1]
-    # A = [[1]]
-    # b = [-1]
-    # x0_bounds = (None, None)
-    # res = scipy_linprog(
-    #     c=c,
-    #     A_ub=A,
-    #     b_ub=b,
-    #     bounds=[x0_bounds],
-    #     method="simplex",
-    #     options={"presolve": False},
-    # )
-    # print(res.fun)
-    # print(res.x)

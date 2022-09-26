@@ -70,7 +70,6 @@ def build_dual_problem(
     for i, offset in offsets.items():
         c[i] = -offset
 
-    a = np.array(A)
     # set domain vars to 1
     pprint(domain_vars)
     A = A.subs([(d, 1) for d in domain_vars])
@@ -92,7 +91,7 @@ def build_dual_problem(
         domain_vars=tuple(dual_domain_vars),
         range_var=result_var,
         symbol_vars=tuple(symbol_vars),
-        minimize=True,
+        minimize=False,
         use_symbols=False,
     )
 

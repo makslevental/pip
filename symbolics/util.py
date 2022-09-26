@@ -3,42 +3,110 @@ from functools import reduce
 import numpy as np
 import sympy as sp
 from scipy.optimize import linprog as scipy_linprog
-from sympy import Equality, Add, Matrix, parse_expr
+from sympy import Equality, Matrix, parse_expr
+from sympy.core import Mul, Expr, Add, Pow, Symbol, Number
+from sympy.core.relational import Relational
 from sympy.parsing.sympy_parser import standard_transformations, convert_equals_signs
 from sympy.solvers.solveset import linear_coeffs
+from z3 import Sqrt, Int, Solver, UDiv
 
 from symbolics.simplex import linprog
 
-big_M = 1e9
+# big_M = 1e9
+big_M = sp.Symbol("M")
+
+
+def _sympy_to_z3_rec(var_map, e):
+    "recursive call for sympy_to_z3()"
+    rv = None
+
+    if not isinstance(e, (Expr, Relational)):
+        raise RuntimeError("Expected sympy Expr: " + repr(e))
+
+    if isinstance(e, Symbol):
+        rv = var_map.get(e.name)
+        if rv is None:
+            raise RuntimeError("No var was corresponds to symbol '" + str(e) + "'")
+    elif isinstance(e, Number):
+        rv = int(e)
+    elif isinstance(e, Relational):
+        lhs = _sympy_to_z3_rec(var_map, e.lhs)
+        rhs = _sympy_to_z3_rec(var_map, e.rhs)
+        rv = {
+            "<=": lhs <= rhs,
+            "<": lhs < rhs,
+            ">=": lhs >= rhs,
+            ">": lhs > rhs,
+        }[e.rel_op]
+    elif isinstance(e, Mul):
+        if isinstance(e.args[0], Pow) and e.args[0].args[1] == -1:
+            assert not isinstance(e.args[1], Pow)
+            e = e.args[1] / e.args[0]
+        rv = _sympy_to_z3_rec(var_map, e.args[0])
+        for child in e.args[1:]:
+            if isinstance(child, Pow) and child.args[1] == -1:
+                rv /= _sympy_to_z3_rec(var_map, child.args[0])
+            else:
+                rv *= _sympy_to_z3_rec(var_map, child)
+    elif isinstance(e, Add):
+        rv = _sympy_to_z3_rec(var_map, e.args[0])
+        for child in e.args[1:]:
+            rv += _sympy_to_z3_rec(var_map, child)
+    # elif isinstance(e, Pow):
+    #     term = _sympy_to_z3_rec(var_map, e.args[0])
+    #     exponent = _sympy_to_z3_rec(var_map, e.args[1])
+    #
+    #     if exponent == 0.5:
+    #         # sqrt
+    #         rv = Sqrt(term)
+    #     else:
+    #         rv = term ** exponent
+
+    if rv is None:
+        raise RuntimeError(
+            "Type '"
+            + str(type(e))
+            + "' is not yet implemented for convertion to a z3 expresion. "
+            + "Subexpression was '"
+            + str(e)
+            + "'."
+        )
+
+    return rv
+
+
+def sympy_to_z3(sympy_var_list, sympy_exp):
+    "convert a sympy expression to a z3 expression. This returns (z3_vars, z3_expression)"
+
+    z3_vars = {}
+    z3_var_map = {}
+
+    for var in sympy_var_list:
+        name = var.name
+        z3_var = Int(name)
+        z3_var_map[name] = z3_var
+        z3_vars[name] = z3_var
+
+    result_exp = _sympy_to_z3_rec(z3_var_map, sympy_exp)
+
+    return z3_vars, result_exp
 
 
 def check_constraints_feasible(constraints, sym_vars):
-    A, b = linear_ineq_to_matrix(constraints, sym_vars)
-    A = np.array(A).astype(int)
-    b = np.array(b).astype(int)
-    # 3rd version here
-    # https://en.wikipedia.org/wiki/Farkas%27_lemma#Variants
-    # if there's a solution with obj value >= 0.0 then
-    # a negative solution doesn't exist (since we're mining)
-    # hence the original system is feasible
-    # if there's a solution and it's negative then the original system
-    # isn't feasible
-    res = scipy_linprog(
-        b.T,
-        A_eq=A.T,
-        b_eq=np.zeros(len(A.T)),
-        method="highs",
-        bounds=[(0, big_M - 1)],
-        integrality=np.ones(len(b)),
-    )
-    if res.success:
-        if res.fun >= 0.0:
-            return True
-        else:
-            return False
-    else:
-        assert "At lower/fixed bound" in res.message
-        return True
+    s = Solver()
+    z3_vars, result_exp1 = sympy_to_z3(sym_vars + (big_M,), constraints[0])
+    for sympy_var, z3_var in z3_vars.items():
+        # s.add(z3_var > 0)
+        if sympy_var != big_M.name:
+            s.add(z3_var < z3_vars[big_M.name])
+
+    s.add(result_exp1)
+    for c in constraints[1:]:
+        result_exp = _sympy_to_z3_rec(z3_vars, c)
+        s.add(result_exp)
+
+    sat = s.check()
+    return sat.r == 1
 
 
 def unitize_syms(expr, vars):
@@ -81,7 +149,6 @@ def build_tableau_from_eqns(
         **{
             "minimize" if minimize else "maximize": objective,
             "subject_to": constraints,
-            "use_symbols": False,
         }
     )
 
