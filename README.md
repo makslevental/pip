@@ -7,7 +7,7 @@
 # Parametric Integer Programming
 
 This is a minimum working example
-of [Parametric Integer Programming](https://en.wikipedia.org/wiki/Parametric_programming),
+of [Parametric Integer Programming](https://en.wikipedia.org/wiki/Parametric_programming)[^1],
 a means to solving [Integer Linear Programs](https://en.wikipedia.org/wiki/Integer_programming) (ILPs) with parameters
 $\theta$ in either the objective or the right-hand sides of the constraints (through duality).
 
@@ -45,6 +45,8 @@ and produces the following solution
 <p align="center">
   <img width="500" src="docs/soln.png" alt="">
 </p>
+
+Images from [^2].
 
 # Use case
 
@@ -107,15 +109,14 @@ Besides the dependencies listed in [requirements.txt](requirements.txt), you wil
 A license for [Gurobi](https://www.gurobi.com/downloads/licenses/) is also recommended; be sure to set `GRB_LICENSE_FILE=<PATH>/gurobi.lic` 
 in the env variables.
 
-# Bibliography
-
-1. [Parametric integer programming 1988 by Paul Feautrier](http://www.numdam.org/item/RO_1988__22_3_243_0.pdf)
-2. [Section 5.1 of New Algorithmics for Polyhedral Calculus via Parametric Linear Programming by Alexandre Maréchal](https://hal.archives-ouvertes.fr/tel-01695086v3/document) (this is the best gentle introduction to the ideas)
-2. [FPL: A Fast Presburger Library](https://grosser.science/FPL)
-
 # Disclaimer
 
 This repo is purely for illustration and experimentation. The code is guaranteed to be neither correct nor fast nor original
 i.e., it has, in fact, been cobbled together from various sources.
 Maybe one day it'll be something...
 
+# Bibliography
+
+[^1]: [Parametric integer programming 1988 by Paul Feautrier](http://www.numdam.org/item/RO_1988__22_3_243_0.pdf)
+[^2]: [Section 5.1 of New Algorithmics for Polyhedral Calculus via Parametric Linear Programming by Alexandre Maréchal](https://hal.archives-ouvertes.fr/tel-01695086v3/document) (this is the best gentle introduction to the ideas)
+[^3]: [FPL: A Fast Presburger Library](https://grosser.science/FPL)

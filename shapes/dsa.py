@@ -37,8 +37,8 @@ def build_dual_problem(
         domain_vars.append(Z[i, j])
 
     # Maximize c'x subject to Ax ≤ b, x ≥ 0
-    num_constraints = 2 * len(Z)
-    num_vars = len(offsets) + len(Z)
+    num_constraints = 1 * len(Z)
+    num_vars = len(offsets) #+ len(Z)
     A = sp.zeros(num_constraints, num_vars)
     b = sp.zeros(1, num_constraints)
     for constr_idx, ((i, j), z) in enumerate(Z.items()):
@@ -48,22 +48,22 @@ def build_dual_problem(
         (
             A[constr_idx, i],
             A[constr_idx, j],
-            A[constr_idx, len(offsets) + constr_idx],
-        ) = (offsets[i], -offsets[j], -z * big_M)
+            # A[constr_idx, len(offsets) + constr_idx],
+        ) = (offsets[i], -offsets[j])
         b[constr_idx] = -rhss.get(mem_i, mem_i)
 
-    for constr_idx, ((i, j), z) in enumerate(Z.items()):
-        mem_j = tensor_ssa_to_sympy_expr[live_range_ids_to_tensor_ssa[j]]
-        # offset_j - offset_j - (1 - z_ij) * M <= -mem_j
-        # <=>
-        # # offset_j - offset_j - opp_z_ij * M <= -mem_j
-        # offset_j - offset_j + z_ij * M <= -mem_j + M
-        (
-            A[len(Z) + constr_idx, j],
-            A[len(Z) + constr_idx, i],
-            A[len(Z) + constr_idx, len(offsets) + constr_idx],
-        ) = (offsets[j], -offsets[i], z * big_M)
-        b[len(Z) + constr_idx] = -rhss.get(mem_j, mem_j) + big_M
+    # for constr_idx, ((i, j), z) in enumerate(Z.items()):
+    #     mem_j = tensor_ssa_to_sympy_expr[live_range_ids_to_tensor_ssa[j]]
+    #     # offset_j - offset_j - (1 - z_ij) * M <= -mem_j
+    #     # <=>
+    #     # # offset_j - offset_j - opp_z_ij * M <= -mem_j
+    #     # offset_j - offset_j + z_ij * M <= -mem_j + M
+    #     (
+    #         A[len(Z) + constr_idx, j],
+    #         A[len(Z) + constr_idx, i],
+    #         A[len(Z) + constr_idx, len(offsets) + constr_idx],
+    #     ) = (offsets[j], -offsets[i], z * big_M)
+    #     b[len(Z) + constr_idx] = -rhss.get(mem_j, mem_j) + big_M
 
     # originally we were minimizing (hence just sum), but now we're maximizing (hence negative sum)
     c = sp.zeros(num_vars, 1)
