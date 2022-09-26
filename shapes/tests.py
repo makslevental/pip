@@ -1,3 +1,4 @@
+import pickle
 import time
 from pprint import pformat
 
@@ -9,14 +10,14 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
-from shapes.dsa import build_dual_problem
+from shapes.dsa import build_dual_problem, build_dual_problems
 from shapes.shape_infer import (
     make_shape_stuff,
     simplify_with_mathematica,
     get_tensor_live_ranges,
     get_constraints,
 )
-from symbolics.symbolic_simplex import solve
+from symbolics.symbolic_simplex import solve, UnboundedProblem
 import symbolics.symbolic_simplex
 
 
@@ -174,18 +175,18 @@ class Net(nn.Module):
         super().__init__()
         self.conv1 = nn.Conv2d(3, 6, 5)
         self.pool = nn.MaxPool2d(2, 2)
-        self.conv2 = nn.Conv2d(6, 16, 5)
-        self.fc1 = nn.Linear(16 * 5 * 5, 120)
-        self.fc2 = nn.Linear(120, 84)
-        self.fc3 = nn.Linear(84, 10)
+        # self.conv2 = nn.Conv2d(6, 16, 5)
+        # self.fc1 = nn.Linear(16 * 5 * 5, 120)
+        # self.fc2 = nn.Linear(120, 84)
+        # self.fc3 = nn.Linear(84, 10)
 
     def forward(self, x):
         x = self.pool(F.relu(self.conv1(x)))
-        x = self.pool(F.relu(self.conv2(x)))
-        x = torch.flatten(x, 1)  # flatten all dimensions except batch
-        x = F.relu(self.fc1(x))
-        x = F.relu(self.fc2(x))
-        x = self.fc3(x)
+        # x = self.pool(F.relu(self.conv2(x)))
+        # x = torch.flatten(x, 1)  # flatten all dimensions except batch
+        # x = F.relu(self.fc1(x))
+        # x = F.relu(self.fc2(x))
+        # x = self.fc3(x)
         return x
 
 
@@ -198,15 +199,29 @@ def test_net_pip():
         overlapping_live_ranges_edge_list,
     ) = get_constraints(tensor_ssa_to_sizes, shape_sym_to_formula, live_ranges)
 
-    tableau, domain_vars, dual_domain_vars, symbol_vars = build_dual_problem(
+    problems = build_dual_problems(
         live_range_ids_to_tensor_ssa,
         tensor_ssa_to_sympy_expr,
         overlapping_live_ranges_edge_list,
     )
 
-    symbolics.symbolic_simplex.sym_vars = symbol_vars
-    for sol in solve(tableau):
-        pass
+    print()
+    print("start solving problems")
+    print()
+
+    for z, tableau, symbol_vars in problems:
+        print(f"{z=}")
+        symbolics.symbolic_simplex.sym_vars = symbol_vars
+        symbolics.symbolic_simplex.branches_taken = []
+        symbolics.symbolic_simplex.explored = set()
+        sp.pprint(tableau)
+        try:
+            for sol in solve(tableau):
+                pass
+        except UnboundedProblem as e:
+            print(e)
+
+
 
 
 if __name__ == "__main__":

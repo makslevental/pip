@@ -1,3 +1,4 @@
+import itertools
 from pprint import pprint
 
 import sympy as sp
@@ -6,7 +7,7 @@ import numpy as np
 from symbolics.util import build_tableau_from_eqns, big_M
 
 
-def build_dual_problem(
+def collect_problem_data(
     live_range_ids_to_tensor_ssa,
     tensor_ssa_to_sympy_expr,
     overlapping_live_ranges_edge_list,
@@ -16,7 +17,7 @@ def build_dual_problem(
     for id, tensor in live_range_ids_to_tensor_ssa.items():
         size_expr = tensor_ssa_to_sympy_expr[tensor]
         if size_expr.free_symbols:
-            rhs = sp.Symbol(name=f"θ_{id}")
+            rhs = sp.Symbol(name=f"φ_{id}")
             rhss[size_expr] = rhs
             symbol_vars.add(rhs)
 
@@ -28,42 +29,42 @@ def build_dual_problem(
         offsets[id] = sp.Symbol(integer=True, name=f"offset_{id}")
         domain_vars.append(offsets[id])
 
-    Z = {}
+    Z = []
     for i, j in overlapping_live_ranges_edge_list:
         if i >= j:
             continue
 
-        Z[i, j] = sp.Symbol(name=f"z_{i}{j}", boolean=True)
-        domain_vars.append(Z[i, j])
+        Z.append((i, j))
+        # Z[i, j] = sp.Symbol(name=f"z_{i}{j}", boolean=True)
+        # domain_vars.append(Z[i, j])
 
+    return offsets, Z, rhss, tuple(domain_vars), tuple(symbol_vars)
+
+
+def build_dual_problem(offsets, Z, mems, rhss, domain_vars, symbol_vars):
     # Maximize c'x subject to Ax ≤ b, x ≥ 0
-    num_constraints = 1 * len(Z)
-    num_vars = len(offsets) #+ len(Z)
+    num_constraints = len(Z)
+    num_vars = len(offsets)  # + len(Z)
     A = sp.zeros(num_constraints, num_vars)
     b = sp.zeros(1, num_constraints)
     for constr_idx, ((i, j), z) in enumerate(Z.items()):
-        mem_i = tensor_ssa_to_sympy_expr[live_range_ids_to_tensor_ssa[i]]
 
-        # offset_i - offset_j - z_ij * M <= -mem_i
-        (
-            A[constr_idx, i],
-            A[constr_idx, j],
-            # A[constr_idx, len(offsets) + constr_idx],
-        ) = (offsets[i], -offsets[j])
-        b[constr_idx] = -rhss.get(mem_i, mem_i)
-
-    # for constr_idx, ((i, j), z) in enumerate(Z.items()):
-    #     mem_j = tensor_ssa_to_sympy_expr[live_range_ids_to_tensor_ssa[j]]
-    #     # offset_j - offset_j - (1 - z_ij) * M <= -mem_j
-    #     # <=>
-    #     # # offset_j - offset_j - opp_z_ij * M <= -mem_j
-    #     # offset_j - offset_j + z_ij * M <= -mem_j + M
-    #     (
-    #         A[len(Z) + constr_idx, j],
-    #         A[len(Z) + constr_idx, i],
-    #         A[len(Z) + constr_idx, len(offsets) + constr_idx],
-    #     ) = (offsets[j], -offsets[i], z * big_M)
-    #     b[len(Z) + constr_idx] = -rhss.get(mem_j, mem_j) + big_M
+        if z == 1:
+            mem_i = mems[i]
+            # offset_i - offset_j <= -mem_i
+            (
+                A[constr_idx, i],
+                A[constr_idx, j],
+            ) = (offsets[i], -offsets[j])
+            b[constr_idx] = -rhss.get(mem_i, mem_i)
+        elif z == 0:
+            mem_j = mems[j]
+            # offset_j - offset_j <= -mem_j
+            (
+                A[constr_idx, j],
+                A[constr_idx, i],
+            ) = (offsets[j], -offsets[i])
+            b[constr_idx] = -rhss.get(mem_j, mem_j)
 
     # originally we were minimizing (hence just sum), but now we're maximizing (hence negative sum)
     c = sp.zeros(num_vars, 1)
@@ -71,7 +72,6 @@ def build_dual_problem(
         c[i] = -offset
 
     # set domain vars to 1
-    pprint(domain_vars)
     A = A.subs([(d, 1) for d in domain_vars])
     b = b.subs([(d, 1) for d in domain_vars])
     c = c.subs([(d, 1) for d in domain_vars])
@@ -95,4 +95,29 @@ def build_dual_problem(
         use_symbols=False,
     )
 
-    return tableau, tuple(domain_vars), tuple(dual_domain_vars), tuple(symbol_vars)
+    return tableau
+
+
+def build_dual_problems(
+    live_range_ids_to_tensor_ssa,
+    tensor_ssa_to_sympy_expr,
+    overlapping_live_ranges_edge_list,
+):
+    offsets, Z, rhss, domain_vars, symbol_vars = collect_problem_data(
+        live_range_ids_to_tensor_ssa,
+        tensor_ssa_to_sympy_expr,
+        overlapping_live_ranges_edge_list,
+    )
+
+    mems = {}
+    for i, j in Z:
+        mems[i] = tensor_ssa_to_sympy_expr[live_range_ids_to_tensor_ssa[i]]
+        if j not in mems:
+            mems[j] = tensor_ssa_to_sympy_expr[live_range_ids_to_tensor_ssa[j]]
+
+    problems = []
+    for z in itertools.product([0, 1], repeat=len(Z)):
+        tableau = build_dual_problem(offsets, dict(list(zip(Z, z))), mems, rhss, domain_vars, symbol_vars)
+        problems.append((z, tableau, symbol_vars))
+
+    return problems

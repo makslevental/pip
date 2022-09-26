@@ -90,29 +90,26 @@ sym_vars = None
 
 
 def candidate_pivot_cols_avail(tab):
-    minn = None
+    cand = None
     for j, c in enumerate(tab[-1, :-1]):
-        if c.free_symbols and check_constraints_feasible(
+        if c.free_symbols and ((c < 0) not in {c for c, _tab in branches_taken}) and check_constraints_feasible(
             [c for c, _tab in branches_taken] + [c < 0], sym_vars
         ):
             branches_taken.append((c < 0, tab))
             return (j, c), tab
         elif not c.free_symbols and c < 0:
-            if minn is None:
-                minn = (j, c), tab
-            elif c < minn[1]:
-                minn = (j, c), tab
+            if cand is None:
+                cand = (j, c)
+            elif c < cand[1]:
+                cand = (j, c)
 
-    if minn is None:
+    if cand is None:
         print("branches_taken", end=" ")
         sp.pprint([c for c, _tab in branches_taken])
         sp.pprint(Eq(sp.Symbol("soln"), -tab[-1, -1]))
         print()
 
-        while True:
-            if not branches_taken:
-                break
-
+        while branches_taken:
             expr, tab = branches_taken.pop()
             assert isinstance(expr, Relational), expr
             if expr in explored:
@@ -121,6 +118,7 @@ def candidate_pivot_cols_avail(tab):
             if (
                 expr.rel_op == "<"
                 and ge not in explored
+                and (ge not in {c for c, _tab in branches_taken})
                 and check_constraints_feasible(
                     [c for c, _tab in branches_taken] + [ge], sym_vars
                 )
@@ -130,7 +128,9 @@ def candidate_pivot_cols_avail(tab):
             elif expr.rel_op == ">=":
                 explored.add(expr)
 
-    return minn, tab
+    if cand is None:
+        return None
+    return cand, tab
 
 
 def find_pivot(j, tab, m=None):
@@ -140,7 +140,6 @@ def find_pivot(j, tab, m=None):
         raise UnboundedProblem(tab[:m, j])
     sol_col = tab[:m, -1]
     piv_col = tab[:m, j]
-    piv_col = piv_col.applyfunc(lambda x: sp.limit(x, big_M, sp.oo))
     i = np.argmin([b / a if a > 0 else sp.oo for b, a in zip(sol_col, piv_col)])
     return (i, j), tab
 
@@ -152,8 +151,6 @@ def simplex(tab, m=None):
     yield tab.copy()
     while j_c_tab := candidate_pivot_cols_avail(tab):
         j_c, tab = j_c_tab
-        if j_c is None:
-            break
         j, c = j_c
         pivot, tab = find_pivot(j, tab, m=m)
         tab = sweep(tab, pivot)
