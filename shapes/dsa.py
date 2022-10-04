@@ -29,42 +29,39 @@ def collect_problem_data(
         offsets[id] = sp.Symbol(integer=True, name=f"offset_{id}")
         domain_vars.append(offsets[id])
 
-    Z = []
+    Z = {}
     for i, j in overlapping_live_ranges_edge_list:
         if i >= j:
             continue
 
-        Z.append((i, j))
-        # Z[i, j] = sp.Symbol(name=f"z_{i}{j}", boolean=True)
-        # domain_vars.append(Z[i, j])
-
+        # Z.append((i, j))
+        Z[i, j] = sp.Symbol(name=f"z_{i}{j}", boolean=True)
+        symbol_vars.add(Z[i, j])
+    symbol_vars.add(big_M)
     return offsets, Z, rhss, tuple(domain_vars), tuple(symbol_vars)
 
 
 def build_dual_problem(offsets, Z, mems, rhss, domain_vars, symbol_vars):
     # Maximize c'x subject to Ax ≤ b, x ≥ 0
-    num_constraints = len(Z)
+    num_constraints = 2 * len(Z)
     num_vars = len(offsets)  # + len(Z)
     A = sp.zeros(num_constraints, num_vars)
     b = sp.zeros(1, num_constraints)
     for constr_idx, ((i, j), z) in enumerate(Z.items()):
 
-        if z == 1:
-            mem_i = mems[i]
-            # offset_i - offset_j <= -mem_i
-            (
-                A[constr_idx, i],
-                A[constr_idx, j],
-            ) = (offsets[i], -offsets[j])
-            b[constr_idx] = -rhss.get(mem_i, mem_i)
-        elif z == 0:
-            mem_j = mems[j]
-            # offset_j - offset_j <= -mem_j
-            (
-                A[constr_idx, j],
-                A[constr_idx, i],
-            ) = (offsets[j], -offsets[i])
-            b[constr_idx] = -rhss.get(mem_j, mem_j)
+        mem_i, mem_j = mems[i], mems[j]
+        # offset_i - offset_j <= -mem_i + z_ij * M
+        (
+            A[2 * constr_idx, i],
+            A[2 * constr_idx, j],
+        ) = (offsets[i], -offsets[j])
+        b[2 * constr_idx] = -rhss.get(mem_i, mem_i) + z * big_M
+        # offset_j - offset_j <= -mem_j + (1 - z_ij) * M
+        (
+            A[2 * constr_idx + 1, j],
+            A[2 * constr_idx + 1, i],
+        ) = (offsets[j], -offsets[i])
+        b[2 * constr_idx + 1] = -rhss.get(mem_j, mem_j) + (1 - z) * big_M
 
     # originally we were minimizing (hence just sum), but now we're maximizing (hence negative sum)
     c = sp.zeros(num_vars, 1)
@@ -115,9 +112,6 @@ def build_dual_problems(
         if j not in mems:
             mems[j] = tensor_ssa_to_sympy_expr[live_range_ids_to_tensor_ssa[j]]
 
-    problems = []
-    for z in itertools.product([0, 1], repeat=len(Z)):
-        tableau = build_dual_problem(offsets, dict(list(zip(Z, z))), mems, rhss, domain_vars, symbol_vars)
-        problems.append((z, tableau, symbol_vars))
+    tableau = build_dual_problem(offsets, Z, mems, rhss, domain_vars, symbol_vars)
 
-    return problems
+    return tableau, symbol_vars

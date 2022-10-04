@@ -77,7 +77,8 @@ def sweep(tab, pivot):
     # gauss eliminate
     tab = normalize_tableau(tab)[0]
     # divide pivot row by pivot column element (entering variable?)
-    tab[pivot[0], :] /= tab[pivot]
+    pivot_val = tab[pivot]
+    tab[pivot[0], :] /= pivot_val
     # subtract corresponding columns for all other rows
     for k in set(range(tab.rows)) - {pivot[0]}:
         tab[k, :] -= tab[k, pivot[1]] * tab[pivot[0], :]

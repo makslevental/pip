@@ -199,7 +199,7 @@ def test_net_pip():
         overlapping_live_ranges_edge_list,
     ) = get_constraints(tensor_ssa_to_sizes, shape_sym_to_formula, live_ranges)
 
-    problems = build_dual_problems(
+    tableau, symbol_vars = build_dual_problems(
         live_range_ids_to_tensor_ssa,
         tensor_ssa_to_sympy_expr,
         overlapping_live_ranges_edge_list,
@@ -209,17 +209,15 @@ def test_net_pip():
     print("start solving problems")
     print()
 
-    for z, tableau, symbol_vars in problems:
-        print(f"{z=}")
-        symbolics.symbolic_simplex.sym_vars = symbol_vars
-        symbolics.symbolic_simplex.branches_taken = []
-        symbolics.symbolic_simplex.explored = set()
-        sp.pprint(tableau)
-        try:
-            for sol in solve(tableau):
-                pass
-        except UnboundedProblem as e:
-            print(e)
+    symbolics.symbolic_simplex.sym_vars = symbol_vars
+    symbolics.symbolic_simplex.branches_taken = []
+    symbolics.symbolic_simplex.explored = set()
+    sp.pprint(tableau, wrap_line=False)
+    try:
+        for sol in solve(tableau):
+            pass
+    except UnboundedProblem as e:
+        sp.pprint(e, wrap_line=False)
 
 
 
