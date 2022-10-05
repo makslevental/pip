@@ -21,6 +21,9 @@ cvxopt
 numpy
 ncls
 z3-solver
+islpy
+git+https://github.com/tobiasgrosser/islplot.git
+jupyter
 
 # you probably want to conda install -c conda-forge pyscipopt
 # pyscipopt
