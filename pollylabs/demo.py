@@ -10,3 +10,7 @@ plot_usets(usets)
 
 umaps = get_umap_list(umap)
 plot_umaps(umaps)
+
+uset = isl.UnionSet("{T[i,j] : 0 < i <= j < 10; S[i,0] : 0 < i <= 20}")
+usets = get_set_list(uset)
+plot_usets(usets)

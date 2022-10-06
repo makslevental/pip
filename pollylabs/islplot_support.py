@@ -11,7 +11,7 @@ from random import randint
 import islpy as isl
 import numpy
 from islpy import Map, Set, dim_type
-from matplotlib import pyplot as plt
+from matplotlib import pyplot as plt, patches
 
 
 def get_point_coordinates(point, scale=1):
@@ -738,15 +738,25 @@ def plot_umaps(umaps):
             fc="k",
             ec="k",
             length_includes_head=True,
+            ls="dashed",
         )
         ax.scatter(Xx, Xy, color=colors[0])
         ax.scatter(Yx, Yy, color=colors[1])
+    plt.grid(True)
     plt.show()
 
 
 def plot_usets(usets):
     ax = plt.axes()
+    xs = set()
+    ys = set()
     for i, uset in enumerate(usets):
         for x, y in uset["points"]:
+            xs.add(x)
+            ys.add(y)
             ax.scatter(x, y, color=colors[i], label=uset["name"])
+    xs, ys = sorted(list(map(int, xs))), sorted(list(map(int, ys)))
+    plt.xticks(xs, xs)
+    plt.yticks(ys, ys)
+    plt.grid(True)
     plt.show()
