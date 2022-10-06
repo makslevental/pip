@@ -14,3 +14,5 @@ plot_umaps(umaps)
 uset = isl.UnionSet("{T[i,j] : 0 < i <= j < 10; S[i,0] : 0 < i <= 20}")
 usets = get_set_list(uset)
 plot_usets(usets)
+
+# context, domain, schedule, reads, writes = parse_code
