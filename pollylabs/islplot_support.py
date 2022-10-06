@@ -11,7 +11,7 @@ from random import randint
 import islpy as isl
 import numpy
 from islpy import Map, Set, dim_type
-from matplotlib import pyplot as plt, patches
+from matplotlib import pyplot as plt
 
 
 def get_point_coordinates(point, scale=1):
@@ -760,3 +760,36 @@ def plot_usets(usets):
     plt.yticks(ys, ys)
     plt.grid(True)
     plt.show()
+
+
+def print_code(ast):
+    s = ast.to_C_str()
+    print(s)
+
+
+def parse_code(code):
+    retType = "string"
+    argTypes = ["string"]
+    args = [code]
+    print(code)
+    jsn = js.globals.Module.ccall("isclan_get_json", retType, argTypes, args)
+    islStringsObj = json.loads(str(jsn))
+    context = isl.Set(str(islStringsObj["context"]))
+    domain = isl.UnionSet(str(islStringsObj["domain"]))
+    schedule = isl.UnionMap(str(islStringsObj["schedule"]))
+    reads = isl.UnionMap(str(islStringsObj["reads"]))
+    writes = isl.UnionMap(str(islStringsObj["writes"]))
+    return context, domain, schedule, reads, writes
+
+
+def print_before_after(domain, schedule_original, schedule_new):
+    context = isl.Set("{ : }")
+    build = isl.AstBuild.from_context(context)
+    schedule_original = schedule_original.intersect_domain(domain)
+    schedule_new = schedule_new.intersect_domain(domain)
+    print("Before Transform:\n")
+    ast = build.node_from_schedule_map(schedule_original)
+    print(ast)
+    print("After Transform:\n")
+    ast = build.node_from_schedule_map(schedule_new)
+    print(ast)

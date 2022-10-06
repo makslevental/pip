@@ -70,14 +70,3 @@ def print_latex(latex_ip):
 
 def display_latex(latex_ip):
     display(Math(get_latex(latex_ip)))
-
-
-# printer = isl.Printer.to_str(isl.DEFAULT_CONTEXT)
-# printer = printer.set_output_format(isl.format.C)
-# printer.print_str("// Start\n")
-# # printer = ast.print_(printer, opts)
-# # printer.print_set(uset)
-# printer.print_map(umap)
-# printer.print_str("// End")
-#
-# print(printer.get_str())
