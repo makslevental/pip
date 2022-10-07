@@ -6,10 +6,12 @@ from math import acos
 from math import atan2 as _atan2
 from math import degrees
 from math import sqrt
+from pprint import pprint
 from random import randint
 
 import islpy as isl
 import numpy
+from islplot.plotter import plot_set_points, plot_map
 from islpy import Map, Set, dim_type
 from matplotlib import pyplot as plt
 
@@ -789,7 +791,44 @@ def print_before_after(domain, schedule_original, schedule_new):
     schedule_new = schedule_new.intersect_domain(domain)
     print("Before Transform:\n")
     ast = build.node_from_schedule_map(schedule_original)
-    print(ast)
+    print(ast.to_C_str())
     print("After Transform:\n")
     ast = build.node_from_schedule_map(schedule_new)
-    print(ast)
+    print(ast.to_C_str())
+
+# def print_before_after(domain, schedule_original, schedule_new):
+#     context = isl.Set("{ : }")
+#     build = isl.AstBuild.from_context(context)
+#     schedule_original = schedule_original.intersect_domain(domain)
+#     schedule_new = schedule_new.intersect_domain(domain)
+#     print("<b>Before Transform:</b>")
+#     ast = build.node_from_schedule_map(schedule_original)
+#     print(ast)
+#     print("<b>After Transform:</b>")
+#     ast = build.node_from_schedule_map(schedule_new)
+#     print(ast)
+
+
+import matplotlib as mpl
+
+mpl.rcParams["axes.grid"] = True
+mpl.rcParams["axes.grid.which"] = "both"
+prop_cycle = plt.rcParams["axes.prop_cycle"]()
+
+
+def next_c():
+    return next(prop_cycle)["color"]
+
+
+def plot_umap(u):
+    def _plot(u):
+        plot_set_points(u.domain(), color=next_c())
+        plot_set_points(u.range(), color=next_c())
+        plot_map(u)
+    u.foreach_map(_plot)
+
+def plot_uset(u):
+    def _plot(u):
+        plot_set_points(u, color=next_c())
+    u.foreach_set(_plot)
+

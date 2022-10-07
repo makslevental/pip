@@ -11,7 +11,6 @@ sympy
 scipy
 ipython
 jupyter
-#islpy
 matplotlib
 #mystic
 #diofant
@@ -22,8 +21,9 @@ numpy
 ncls
 z3-solver
 islpy
+islplot
 git+https://github.com/tobiasgrosser/islplot.git
-jupyter
+#sympy_plot_backends
 
 # you probably want to conda install -c conda-forge pyscipopt
 # pyscipopt
