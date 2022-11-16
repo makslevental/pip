@@ -27,3 +27,9 @@ git+https://github.com/tobiasgrosser/islplot.git
 
 # you probably want to conda install -c conda-forge pyscipopt
 # pyscipopt
+
+ortools==9.3.10497
+networkx
+pandas
+numba
+termplotlib
