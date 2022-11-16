@@ -13,6 +13,9 @@ import networkx as nx
 import numpy as np
 import pandas as pd
 from ncls import NCLS
+from ortools.graph import pywrapgraph
+from ortools.linear_solver import pywraplp
+from ortools.sat.python import cp_model
 from pyscipopt import (
     Model,
     quicksum,
@@ -23,7 +26,13 @@ from pyscipopt import (
     SCIP_PARAMSETTING,
     SCIP_HEURTIMING,
     Heur,
+    Branchrule,
+    Eventhdlr,
+    SCIP_RESULT,
+    SCIP_EVENTTYPE,
+    SCIP_PARAMSETTING,
 )
+from treed import TreeD
 
 # from ortools.graph import pywrapgraph
 # from ortools.linear_solver import pywraplp
@@ -111,7 +120,7 @@ class RequiredAlloc:
                 ** np.random.randint(5, 10)(str(self).encode("utf-8")).hexdigest(),
                 16,
             )
-            % 10**8
+            % 10 ** 8
         )
 
 
@@ -977,15 +986,124 @@ def solve_mip(required_allocs: pd.DataFrame):
         return []
 
 
-class MyHeur(Heur):
-    def heurexec(self, heurtiming, nodeinfeasible):
-        node = self.model.getCurrentNode()
-        leaves, children, siblings = self.model.getOpenNodes()
-        print([l.getParentBranchings() for l in leaves])
-        # parent_branchings = node.getParentBranchings()
-        # print(parent_branchings)
-        res = super(MyHeur, self).heurexec(heurtiming, nodeinfeasible)
-        return res
+def print_lp(model):
+    lp_rows = model.getLPRowsData()
+    row_names = [r.name for r in lp_rows]
+    lp_cols = model.getLPColsData()
+    tabl = np.empty((len(lp_rows), len(lp_cols)), dtype=float)
+    col_name_to_idx = {}
+    for row in lp_rows:
+        row_idx = row.getLPPos()
+        vals = row.getVals()
+        for i, col in enumerate(row.getCols()):
+            col_idx = col.getLPPos()
+            var_name = col.getVar().name
+            if var_name not in col_name_to_idx:
+                col_name_to_idx[var_name] = col_idx
+            else:
+                assert col_name_to_idx[var_name] == col_idx
+
+            tabl[row_idx, col_idx] = vals[i]
+
+    tabl[tabl > 1e20] = float("inf")
+    df = pd.DataFrame(
+        tabl.round(decimals=10),
+        columns=[k for k, v in sorted(col_name_to_idx.items(), key=lambda x: x[1])],
+        index=row_names,
+    )
+    with pd.option_context(
+        "display.max_rows",
+        None,
+        "display.max_columns",
+        None,
+        "display.width",
+        None,
+        "display.precision",
+        3,
+        "display.float_format",
+        lambda x: "%.3f" % x,
+    ):
+        print(df)
+
+
+events_types_ = dict(
+    BESTSOLFOUND=67108864,
+    DISABLED=0,
+    FIRSTLPSOLVED=8388608,
+    GHOLEADDED=2048,
+    GHOLEREMOVED=4096,
+    GLBCHANGED=32,
+    GUBCHANGED=64,
+    IMPLADDED=32768,
+    LBRELAXED=256,
+    LBTIGHTENED=128,
+    LHOLEADDED=8192,
+    LHOLEREMOVED=16384,
+    LPEVENT=25165824,
+    LPSOLVED=16777216,
+    NODEBRANCHED=2097152,
+    NODEFEASIBLE=524288,
+    NODEFOCUSED=262144,
+    NODEINFEASIBLE=1048576,
+    NODESOLVED=3670016,
+    OBJCHANGED=16,
+    POORSOLFOUND=33554432,
+    PRESOLVEROUND=131072,
+    ROWADDEDLP=536870912,
+    ROWADDEDSEPA=134217728,
+    ROWCOEFCHANGED=2147483648,
+    ROWCONSTCHANGED=4294967296,
+    ROWDELETEDLP=1073741824,
+    ROWDELETEDSEPA=268435456,
+    ROWSIDECHANGED=8589934592,
+    SYNC=17179869184,
+    UBRELAXED=1024,
+    UBTIGHTENED=512,
+    VARADDED=1,
+    VARDELETED=2,
+    VARFIXED=4,
+    VARUNLOCKED=8,
+)
+
+events_types = {v: k for k, v in events_types_.items()}
+
+
+class NodeEventHandler(Eventhdlr):
+    def __init__(self):
+        self.calls = []
+
+    def eventinit(self):
+        for evt_type in events_types:
+            self.model.catchEvent(evt_type, self)
+
+    def eventexit(self):
+        for evt_type in events_types:
+            self.model.dropEvent(evt_type, self)
+
+    def eventexec(self, event):
+        print(events_types[event.getType()])
+        print(self.model.getNLPRows(), self.model.getNLPCols())
+        if (
+            self.model.getPrimalbound() == self.model.getDualbound()
+            and self.model.getNLPRows()
+        ):
+            print_lp(self.model)
+        # self.calls.append("eventexec")
+        # assert event.getType() == SCIP_EVENTTYPE.NODEFOCUSED
+        node = event.getNode()
+
+        # if node.getDepth() == 0:
+        #     assert node.getParent() is None
+        #     assert node.getParentBranchings() is None
+        #     return
+        #
+        # variables, branchbounds, boundtypes = node.getParentBranchings()
+        # assert len(variables) == 1
+        # assert len(branchbounds) == 1
+        # assert len(boundtypes) == 1
+        # domain_changes = node.getDomchg()
+        # bound_changes = domain_changes.getBoundchgs()
+        # assert len(bound_changes) == 1
 
 
 def solve_mip_scip(required_allocs: pd.DataFrame):
@@ -1009,19 +1127,16 @@ def solve_mip_scip(required_allocs: pd.DataFrame):
             if u < v
         ]
     )
-    heuristic = MyHeur()
     solver = Model("memory_planning")
-    solver.hideOutput()
-    # solver.includeHeur(
-    #     heuristic,
-    #     "PyHeur",
-    #     "custom heuristic implemented in python",
-    #     "Y",
-    #     timingmask=SCIP_HEURTIMING.BEFORENODE,
-    # )
+    solver.setPresolve(SCIP_PARAMSETTING.OFF)
+    # solver.hideOutput()
+    node_eventhdlr = NodeEventHandler()
+    solver.includeEventhdlr(
+        node_eventhdlr, "NodeEventHandler", "python event handler to catch NODEFOCUSED"
+    )
     max_mem = sum(r.mem_size for r in required_allocs.itertuples())
-
     total_mem = solver.addVar(vtype="I", lb=0, ub=max_mem, name="total_mem")
+
     offsets = []
     for i, row in enumerate(required_allocs.itertuples()):
         offset = solver.addVar(
@@ -1055,10 +1170,15 @@ def solve_mip_scip(required_allocs: pd.DataFrame):
     # Minimize u
     solver.setObjective(total_mem, "minimize")
 
+    # treed = TreeD(scip_model=solver, nodelimit=2000, showcuts=True)
+    # treed.solve()
+    # fig = treed.draw()
+    # fig.show(renderer='notebook')
+    # fig.show()
+
     solver.optimize()
 
     if solver.getStatus() == "optimal":
-        nodes = solver.getNTotalNodes()
         return [
             PlannedAlloc.from_req_row(row, solver.getVal(offsets[row.Index[0]]))
             for row in required_allocs.itertuples()
@@ -1205,15 +1325,15 @@ def test_lstm():
         (9, 12): 2 ** np.random.randint(1, 5),
         (13, 14): 2 ** np.random.randint(1, 5),
     }
-    lvrs = {}
-    for _ in range(7):
-        start = np.random.randint(1, 20)
-        end = np.random.randint(start + 1, 21)
-        lvrs[start, end] = 2 ** np.random.randint(1, 5)
-
-    lvrs = {}
-    for start, end in [(5, 14), (13, 14), (12, 19), (3, 14), (3, 7), (12, 20), (2, 4)]:
-        lvrs[start, end] = 2 ** np.random.randint(1, 5)
+    # lvrs = {}
+    # for _ in range(7):
+    #     start = np.random.randint(1, 20)
+    #     end = np.random.randint(start + 1, 21)
+    #     lvrs[start, end] = 2 ** np.random.randint(1, 5)
+    #
+    # lvrs = {}
+    # for start, end in [(5, 14), (13, 14), (12, 19), (3, 14), (3, 7), (12, 20), (2, 4)]:
+    #     lvrs[start, end] = 2 ** np.random.randint(1, 5)
 
     req_mem_allocs = make_df_from_reqs(
         [
@@ -1244,7 +1364,7 @@ def test_lstm():
 
 
 if __name__ == "__main__":
-    for i in range(20):
+    for i in range(1):
         test_lstm()
         # print("\n" + 10 * "*" + "\n")
     # test_resnet18()
