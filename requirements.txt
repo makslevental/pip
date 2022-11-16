@@ -11,7 +11,6 @@ sympy
 scipy
 ipython
 jupyter
-#islpy
 matplotlib
 #mystic
 #diofant
@@ -20,6 +19,17 @@ cvxpy
 cvxopt
 numpy
 ncls
+z3-solver
+islpy
+git+https://github.com/tobiasgrosser/islplot.git
+#sympy_plot_backends
 
 # you probably want to conda install -c conda-forge pyscipopt
 # pyscipopt
+
+ortools==9.3.10497
+networkx
+pandas
+numba
+termplotlib
+treed
