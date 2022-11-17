@@ -23,3 +23,9 @@ ncls
 
 # you probably want to conda install -c conda-forge pyscipopt
 # pyscipopt
+
+ProcessScheduler
+z3-solver
+pysmt
+yices
+python-sat[pblib,aiger]
