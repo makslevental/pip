@@ -61,11 +61,13 @@ class LPstatEventhdlr(Eventhdlr):
             "rows": self.model.getNLPRows(),
             "primalbound": pb,
             "dualbound": self.model.getDualbound(),
-            "time": self.model.getSolvingTime()
+            "time": self.model.getSolvingTime(),
         }
         parent_branchings = node.getParentBranchings()
         if parent_branchings:
-            nodedict["parent_branchings"] = ",".join([b.name for b in parent_branchings[0]])
+            nodedict["parent_branchings"] = ",".join(
+                [b.name for b in parent_branchings[0]]
+            )
         else:
             nodedict["parent_branchings"] = []
 
@@ -178,7 +180,9 @@ class TreeD:
         try:
             self.stress = mf.stress_  # not available with all transformations
         except:
-            print("no stress information available for {self.transformation} transformation")
+            print(
+                "no stress information available for {self.transformation} transformation"
+            )
 
         self.df["x"] = xy[:, 0]
         self.df["y"] = xy[:, 1]
@@ -301,7 +305,11 @@ class TreeD:
             active=0,
             yanchor="top",
             xanchor="left",
-            currentvalue={"prefix": "Age:", "visible": True, "xanchor": "right",},
+            currentvalue={
+                "prefix": "Age:",
+                "visible": True,
+                "xanchor": "right",
+            },
             len=0.9,
             x=0.05,
             y=0.1,
@@ -384,10 +392,14 @@ class TreeD:
 
         frames = []
         sliders_dict = dict(
-            active=self.start_frame-1,
+            active=self.start_frame - 1,
             yanchor="top",
             xanchor="left",
-            currentvalue={"prefix": "Age:", "visible": True, "xanchor": "right",},
+            currentvalue={
+                "prefix": "Age:",
+                "visible": True,
+                "xanchor": "right",
+            },
             len=0.9,
             x=0.05,
             y=0.1,
@@ -539,7 +551,10 @@ class TreeD:
                                 args=[
                                     None,
                                     {
-                                        "frame": {"duration": 50, "redraw": True, },
+                                        "frame": {
+                                            "duration": 50,
+                                            "redraw": True,
+                                        },
                                         "fromcurrent": True,
                                     },
                                 ],
@@ -670,7 +685,7 @@ class TreeD:
             layout["updatemenus"] = self.updatemenus()
         if self.showslider:
             layout["sliders"] = [sliders]
-        
+
         self.fig = go.Figure(
             data=[nodes, primalbound, dualbound, optval, nodeprojs, edges],
             layout=layout,
@@ -806,7 +821,6 @@ class TreeD:
             frames=frames,
         )
 
-
         return self.fig2d
 
     def solve(self):
@@ -889,8 +903,8 @@ class TreeD:
 
     def hierarchy_pos(self, root=0, width=1.0, vert_gap=0.2, vert_loc=0, xcenter=0.5):
         """compute abstract node positions of the tree
-        From Joel's answer at https://stackoverflow.com/a/29597209/2966723.  
-        Licensed under Creative Commons Attribution-Share Alike 
+        From Joel's answer at https://stackoverflow.com/a/29597209/2966723.
+        Licensed under Creative Commons Attribution-Share Alike
         """
         G = self.nxgraph
         if not nx.is_tree(G):
