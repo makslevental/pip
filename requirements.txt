@@ -2,9 +2,9 @@
 --pre
 torch
 
--f https://github.com/llvm/torch-mlir/releases/expanded_assets/snapshot-20220913.595
---pre
-torch-mlir
+#-f https://github.com/llvm/torch-mlir/releases/expanded_assets/snapshot-20220913.595
+#--pre
+#torch-mlir
 
 
 sympy
