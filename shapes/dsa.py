@@ -54,13 +54,14 @@ def build_dual_problem(offsets, Z, mems, rhss, domain_vars, symbol_vars):
         (
             A[2 * constr_idx, i],
             A[2 * constr_idx, j],
-        ) = (offsets[i], -offsets[j])
+        ) = (offsets[i], -2 * offsets[j])
         b[2 * constr_idx] = -rhss.get(mem_i, mem_i) + z * big_M
+
         # offset_j - offset_j <= -mem_j + (1 - z_ij) * M
         (
             A[2 * constr_idx + 1, j],
             A[2 * constr_idx + 1, i],
-        ) = (offsets[j], -offsets[i])
+        ) = (offsets[j], -2 * offsets[i])
         b[2 * constr_idx + 1] = -rhss.get(mem_j, mem_j) + (1 - z) * big_M
 
     # originally we were minimizing (hence just sum), but now we're maximizing (hence negative sum)

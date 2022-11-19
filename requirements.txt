@@ -24,3 +24,4 @@ z3-solver
 
 # you probably want to conda install -c conda-forge pyscipopt
 # pyscipopt
+optlang

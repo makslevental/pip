@@ -138,6 +138,7 @@ def find_pivot(j, tab, m=None):
     tab, m = normalize_tableau(tab, m)
     assert all(b >= 0 for b in tab[:m, -1])
     if all(a <= 0 for a in tab[:m, j]):
+        sp.pprint(tab[:m, :], wrap_line=False)
         raise UnboundedProblem(tab[:m, j])
     sol_col = tab[:m, -1]
     piv_col = tab[:m, j]
@@ -157,6 +158,7 @@ def simplex(tab, m=None):
         tab = sweep(tab, pivot)
         # how to identify a leaf?
         yield tab.copy()
+        del pivot
 
 
 def find_dual_pivot(tab, m=None):

@@ -9,6 +9,7 @@ import sympy as sp
 import torch
 import torch.nn.functional as F
 from torch import nn
+from torch.utils.cpp_extension import CppExtension
 
 from shapes.dsa import build_dual_problem, build_dual_problems
 from shapes.shape_infer import (
@@ -216,6 +217,7 @@ def test_net_pip():
     try:
         for sol in solve(tableau):
             pass
+            # sp.pprint(sol[:-1, :], wrap_line=False)
     except UnboundedProblem as e:
         sp.pprint(e, wrap_line=False)
 
@@ -225,3 +227,6 @@ def test_net_pip():
 if __name__ == "__main__":
     # test_resnet_ddp()
     test_net_pip()
+
+
+CppExtension
