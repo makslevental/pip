@@ -330,6 +330,8 @@ def simplify_with_mathematica(sym_to_shape_inputs, ss_map):
     simplified = {}
     with WolframLanguageSession(
         # kernel="/opt/Wolfram/WolframEngine/12.3/Executables/WolframKernel",
+        # kernel="/usr/local/Wolfram/WolframEngine/13.1/Executables/WolframKernel",
+        kernel="/Applications/Wolfram Engine.app/Contents/Resources/Wolfram Player.app/Contents/MacOS/WolframKernel",
         # kernel_loglevel=logging.DEBUG,
         initfile=(Path(__file__).parent / "initkernel.m").resolve(),
     ) as session:

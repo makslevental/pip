@@ -216,6 +216,7 @@ def test_net_pip():
     try:
         for sol in solve(tableau):
             pass
+            # sp.pprint(sol[:-1, :], wrap_line=False)
     except UnboundedProblem as e:
         sp.pprint(e, wrap_line=False)
 

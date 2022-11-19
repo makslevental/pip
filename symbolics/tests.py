@@ -4,7 +4,7 @@ from sympy import pprint as sym_pprint
 from symbol import EPS, AugmentedSymbolicTableau
 from symbolics.symbolic_simplex import linprog, solve
 import symbolics.symbolic_simplex
-from util import check_constraints_feasible, build_tableau_from_eqns_str
+from util import check_constraints_feasible, build_tableau_from_eqns_str, big_M
 
 
 def test_build_tableau_from_eqns():
@@ -59,9 +59,9 @@ def test_manual_tree():
     # l1 >= 0
     # l2 >= 0
     """,
-        domain_vars=["l1", "l2"],
+        domain_var_names=["l1", "l2"],
         range_var="z",
-        symbol_vars=["x1", "x2"],
+        symbol_var_names=["x1", "x2"],
         use_symbols=False,
     )
 
@@ -163,9 +163,9 @@ def test_auto_tree():
     # l1 >= 0
     # l2 >= 0
     """,
-        domain_vars=["l1", "l2"],
+        domain_var_names=["l1", "l2"],
         range_var="z",
-        symbol_vars=["x1", "x2"],
+        symbol_var_names=["x1", "x2"],
         use_symbols=False,
         minimize=True,
     )
@@ -175,9 +175,30 @@ def test_auto_tree():
         pass
 
 
+def test_auto_tree_with_big_M():
+    tableau, domain_vars, (x1, x2, M) = build_tableau_from_eqns_str(
+        eqns_str=f"""
+    z = x1*a + x2*b + x3*M
+    x1 + x2 + x3 <= 5
+    -x1 <= 1
+    -x2 <= 2
+    -x3 <= 3
+    -x1 + x2 <= 0
+    """,
+        domain_var_names=["x1", "x2", "x3"],
+        range_var="z",
+        symbol_var_names=["a", "b", "M"],
+        use_symbols=False,
+        minimize=True,
+    )
+
+    symbolics.symbolic_simplex.sym_vars = (x1, x2, big_M)
+    for sol in solve(tableau):
+        pass
+
+
 if __name__ == "__main__":
     # test_build_tableau_from_eqns()
     # test_check_constraint_checker()
     # test_manual_tree()
-    print()
-    test_auto_tree()
+    test_auto_tree_with_big_M()

@@ -1,3 +1,4 @@
+import time
 from functools import reduce
 
 import numpy as np
@@ -95,17 +96,17 @@ def sympy_to_z3(sympy_var_list, sympy_exp):
 def check_constraints_feasible(constraints, sym_vars):
     s = Solver()
     z3_vars, result_exp1 = sympy_to_z3(sym_vars + (big_M,), constraints[0])
-    for sympy_var, z3_var in z3_vars.items():
-        # s.add(z3_var > 0)
-        if sympy_var != big_M.name:
-            s.add(z3_var < z3_vars[big_M.name])
+    big_M_constraint = sum([z for z_name, z in z3_vars.items() if z_name != big_M.name])
+    s.add(big_M_constraint < z3_vars[big_M.name])
 
     s.add(result_exp1)
     for c in constraints[1:]:
         result_exp = _sympy_to_z3_rec(z3_vars, c)
         s.add(result_exp)
 
+    start = time.monotonic()
     sat = s.check()
+    print("len cons", len(constraints), "check time", time.monotonic() - start)
     return sat.r == 1
 
 
@@ -156,17 +157,26 @@ def build_tableau_from_eqns(
 
 
 def build_tableau_from_eqns_str(
-    eqns_str, domain_vars, range_var, symbol_vars, minimize=True, use_symbols=False
+    eqns_str,
+    domain_var_names,
+    range_var,
+    symbol_var_names,
+    minimize=True,
+    use_symbols=False,
 ):
-    domain_vars = {d: sp.Symbol(d, real=True) for d in sorted(domain_vars)}
+    domain_var_names = {d: sp.Symbol(d, real=True) for d in sorted(domain_var_names)}
     range_var = {range_var: sp.Symbol(range_var, real=True)}
-    symbol_vars = {d: sp.Symbol(d, real=True) for d in sorted(symbol_vars)}
+    symbol_vars = {
+        d: sp.Symbol(d, real=True) for d in sorted(symbol_var_names) if d != "M"
+    }
+    if "M" in symbol_var_names:
+        symbol_vars["M"] = big_M
 
     def _parse_expr(exp):
         return parse_expr(
             exp,
             transformations=standard_transformations + (convert_equals_signs,),
-            local_dict=domain_vars | range_var | symbol_vars,
+            local_dict=domain_var_names | range_var | symbol_vars,
         )
 
     eqns = [
@@ -175,12 +185,12 @@ def build_tableau_from_eqns_str(
         if "#" not in eqn_str
     ]
 
-    domain_vars = tuple(domain_vars.values())
+    domain_var_names = tuple(domain_var_names.values())
     range_var = range_var.popitem()[1]
     symbol_vars = tuple(symbol_vars.values())
 
     return build_tableau_from_eqns(
-        eqns, domain_vars, range_var, symbol_vars, minimize, use_symbols
+        eqns, domain_var_names, range_var, symbol_vars, minimize, use_symbols
     )
 
 
