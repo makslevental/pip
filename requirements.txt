@@ -11,6 +11,7 @@ sympy
 scipy
 ipython
 jupyter
+#islpy
 matplotlib
 #mystic
 #diofant
@@ -32,4 +33,5 @@ networkx
 pandas
 numba
 termplotlib
-treed
+plotly
+scikit-learn

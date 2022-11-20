@@ -1,5 +1,6 @@
 import warnings
 from dataclasses import dataclass
+from itertools import combinations
 from pprint import pprint
 from typing import List
 from IPython.display import display
@@ -7,7 +8,30 @@ from IPython.display import display
 import numpy as np
 import pandas as pd
 from ncls import NCLS
+from networkx import find_cliques, node_clique_number
+from networkx.algorithms.approximation import max_clique
 from pyscipopt import Model, Eventhdlr, SCIP_PARAMSETTING
+from pyscipopt.scip import PY_SCIP_EVENTTYPE
+import inspect
+import hashlib
+import networkx as nx
+
+from shapes.plotting import make_memory_map
+from shapes.strategies import solve_csp
+from treed import TreeD
+
+
+def make_max_clique_graph(G):
+    B = G.__class__()
+    cliques = list(enumerate(set(c) for c in find_cliques(G)))
+    # Add a numbered node for each clique.
+    B.add_nodes_from((i, {"nodes": c}) for i, c in cliques)
+    # Join cliques by an edge if they share a node.
+    clique_pairs = combinations(cliques, 2)
+    B.add_edges_from(
+        (i, j, {"nodes": c1 & c2}) for (i, c1), (j, c2) in clique_pairs if c1 & c2
+    )
+    return B
 
 
 def valid_add(a, b):
@@ -65,9 +89,6 @@ class MemRegion:
         return self.offset + self.size
 
 
-import hashlib
-
-
 class RequiredAlloc:
     lvr: LiveRange
     size: int
@@ -88,7 +109,7 @@ class RequiredAlloc:
                 ** np.random.randint(5, 10)(str(self).encode("utf-8")).hexdigest(),
                 16,
             )
-            % 10 ** 8
+            % 10**8
         )
 
 
@@ -175,44 +196,8 @@ def print_lp(model):
 
 
 events_types_ = dict(
-    BESTSOLFOUND=67108864,
-    DISABLED=0,
-    FIRSTLPSOLVED=8388608,
-    GHOLEADDED=2048,
-    GHOLEREMOVED=4096,
-    GLBCHANGED=32,
-    GUBCHANGED=64,
-    IMPLADDED=32768,
-    LBRELAXED=256,
-    LBTIGHTENED=128,
-    LHOLEADDED=8192,
-    LHOLEREMOVED=16384,
-    LPEVENT=25165824,
-    LPSOLVED=16777216,
-    NODEBRANCHED=2097152,
-    NODEFEASIBLE=524288,
-    NODEFOCUSED=262144,
-    NODEINFEASIBLE=1048576,
-    NODESOLVED=3670016,
-    OBJCHANGED=16,
-    POORSOLFOUND=33554432,
-    PRESOLVEROUND=131072,
-    ROWADDEDLP=536870912,
-    ROWADDEDSEPA=134217728,
-    ROWCOEFCHANGED=2147483648,
-    ROWCONSTCHANGED=4294967296,
-    ROWDELETEDLP=1073741824,
-    ROWDELETEDSEPA=268435456,
-    ROWSIDECHANGED=8589934592,
-    SYNC=17179869184,
-    UBRELAXED=1024,
-    UBTIGHTENED=512,
-    VARADDED=1,
-    VARDELETED=2,
-    VARFIXED=4,
-    VARUNLOCKED=8,
+    inspect.getmembers(PY_SCIP_EVENTTYPE, predicate=lambda x: isinstance(x, int))
 )
-
 events_types = {v: k for k, v in events_types_.items()}
 
 
@@ -229,13 +214,61 @@ class NodeEventHandler(Eventhdlr):
             self.model.dropEvent(evt_type, self)
 
     def eventexec(self, event):
-        # print(events_types[event.getType()])
-        # print(self.model.getNLPRows(), self.model.getNLPCols())
-        if (
-            self.model.getPrimalbound() == self.model.getDualbound()
-            and self.model.getNLPRows()
-        ):
-            print_lp(self.model)
+        # if (
+        #     self.model.getPrimalbound() == self.model.getDualbound()
+        #     and self.model.getNLPRows()
+        # ):
+        #     print_lp(self.model)
+
+        evt_type = events_types[event.getType()]
+        print(evt_type)
+        if evt_type.startswith("ROW"):
+            return
+        try:
+            print(self.model.getPrimalbound(), self.model.getDualbound())
+            if event.getNode() and event.getNode().getParentBranchings():
+                print(event.getNode().getParentBranchings())
+                # variables, branchbounds, boundtypes = event.getNode().getParentBranchings()
+        except Exception as e:
+            print(e)
+
+        # if event.getType() in {
+        #     SCIP_EVENTTYPE.LPSOLVED,
+        #     SCIP_EVENTTYPE.FIRSTLPSOLVED,
+        #     SCIP_EVENTTYPE.NODEBRANCHED,
+        #     SCIP_EVENTTYPE.NODESOLVED,
+        #     SCIP_EVENTTYPE.NODEFOCUSED,
+        #     SCIP_EVENTTYPE.NODEINFEASIBLE,
+        #     SCIP_EVENTTYPE.ROWDELETEDLP
+        #     SCIP_EVENTTYPE.OBJCHANGED
+        #     SCIP_EVENTTYPE.BESTSOLFOUND,
+        # }:
+        #     # print(events_types[event.getType()])
+        #     node = event.getNode()
+        #
+        #     if node.getDepth() == 0:
+        #         if node.getParent() is not None:
+        #             pass
+        #         assert node.getParentBranchings() is None
+        #         return
+        #     variables, branchbounds, boundtypes = node.getParentBranchings()
+        #     print(variables)
+        #     # print([f"{len([v for v in variables if '_z' in v.name])}z"] + [v for v in variables if "_z" not in v.name])
+        #     # print(variables, end=" ")
+        #     # print()
+        #     # if rows := self.model.getLPRowsData():
+        #     #     print(", ".join([r.name for r in rows]))
+        #     #     # print(", ".join(map(str, [r.isRemovable() for r in rows])))
+        #     #     # print(", ".join(map(str, [r.isIntegral() for r in rows])))
+        #     #     # print(", ".join([r.getBasisStatus() for r in rows]))
+        #     #     print([(r.getLhs() == r.getRhs()) for r in rows])
+        #     #
+        #     # # if cols := self.model.getLPColsData():
+        #     # #     print(", ".join([r.getVar().name for r in cols]))
+        #     # #     print(", ".join([r.getBasisStatus() for r in cols]))
+        #     #
+        #     # # print(self.model.getPrimalbound(), self.model.getDualbound())
+        #
 
 
 def solve_mip_scip(required_allocs: pd.DataFrame):
@@ -264,7 +297,7 @@ def solve_mip_scip(required_allocs: pd.DataFrame):
 
     solver.setPresolve(SCIP_PARAMSETTING.OFF)
     node_eventhdlr = NodeEventHandler()
-    solver.includeEventhdlr(node_eventhdlr, "", "")
+    # solver.includeEventhdlr(node_eventhdlr, "", "")
 
     max_mem = sum(r.mem_size for r in required_allocs.itertuples())
     total_mem = solver.addVar(vtype="I", lb=0, ub=max_mem, name="total_mem")
@@ -274,70 +307,135 @@ def solve_mip_scip(required_allocs: pd.DataFrame):
         offset = solver.addVar(
             vtype="I", lb=0, ub=max_mem, name=f"offset_{row.Index[0]}"
         )
-        solver.addCons(offset + row.mem_size <= total_mem)
+        solver.chgVarBranchPriority(offset, -1e6)
+        solver.addCons(offset + row.mem_size <= total_mem, name=f"o_{i} + m_{i} <= t")
         offsets.append(offset)
 
+    zs = {}
     for i, j in edge_list:
-        inters = solver.addVar(vtype="B", lb=0, ub=1, name=f"z_{{{i},{j}}}")
+        zs[i, j] = z = solver.addVar(vtype="B", lb=0, ub=1, name=f"z_{{{i},{j}}}")
+        solver.chgVarBranchPriority(z, 1e6)
         solver.addCons(
-            offsets[i] + required_allocs.iloc[i].mem_size
-            <= offsets[j] + inters * max_mem
+            offsets[i] + required_allocs.iloc[i].mem_size <= offsets[j] + z * max_mem,
+            name=f"o_{i} +m_{i} <= o_{j} + z*M",
         )
         # conversely here
         solver.addCons(
             offsets[j] + required_allocs.iloc[j].mem_size
-            <= offsets[i] + (1 - inters) * max_mem
+            <= offsets[i] + (1 - z) * max_mem,
+            name=f"o_{j} +m_{j} <= o_{i} + (1-z)*M",
         )
 
     # Minimize u
     solver.setObjective(total_mem, "minimize")
 
-    treed = TreeD(scip_model=solver, nodelimit=2000, showcuts=True)
-    treed.solve()
-    fig = treed.draw()
-    fig.show(renderer='notebook')
-    fig.show()
+    # treed = TreeD(scip_model=solver, nodelimit=2000, showcuts=True)
+    # treed.solve()
+    # fig = treed.draw2d()
+    # fig.write_html(file="mip.html", include_plotlyjs=True)
+    # fig.show()
 
-    # solver.optimize()
+    solver.optimize()
 
     if solver.getStatus() == "optimal":
         return [
             PlannedAlloc.from_req_row(row, solver.getVal(offsets[row.Index[0]]))
             for row in required_allocs.itertuples()
-        ]
+        ], {(i, j): solver.getVal(z) for (i, j), z in zs.items()}
     else:
         warnings.warn("mip: The problem does not have an optimal solution.")
         return []
 
 
-def test_lstm():
-    lvrs = {
-        # (0, 3): 1024,
-        # (1, 3): 1024,
-        # (2, 4): 1024,
-        (5, 10): 2 ** np.random.randint(1, 5),
-        (6, 14): 2 ** np.random.randint(1, 5),
-        (7, 10): 2 ** np.random.randint(1, 5),
-        (8, 10): 2 ** np.random.randint(1, 5),
-        (8, 12): 2 ** np.random.randint(1, 5),
-        (9, 12): 2 ** np.random.randint(1, 5),
-        (13, 14): 2 ** np.random.randint(1, 5),
-    }
-    # print("lvrs", lvrs)
+def schedule_cliques(lvrs):
+    G = nx.interval_graph(lvrs.keys())
+    max_cliques = make_max_clique_graph(G)
+    for clique, nodes in max_cliques.nodes(data=True):
+        nodes = nodes["nodes"]
+        req_mem_allocs = make_df_from_reqs(
+            [
+                RequiredAlloc(LiveRange(begin, end), lvrs[begin, end], str(i))
+                for i, (begin, end) in enumerate(nodes)
+            ]
+        )
+        planned_allocs, zs = solve_mip_scip(req_mem_allocs)
+        planned_allocs.sort(key=lambda r: r.mem_region.offset)
+        # print([v for v in sorted(zs.values())])
+        # print([(r.lvr.begin, r.lvr.end) for r in planned_allocs])
+        make_memory_map(planned_allocs, "mip", save=False).show()
+
+        mip_high_water_mark = (
+            planned_allocs[-1].mem_region.offset + planned_allocs[-1].mem_region.size
+        )
+        print(f"clique {clique}", mip_high_water_mark)
+
+
+def schedule_whole(lvrs):
     req_mem_allocs = make_df_from_reqs(
         [
             RequiredAlloc(LiveRange(begin, end), size, str(i))
             for i, ((begin, end), size) in enumerate(lvrs.items())
         ]
     )
-    res = solve_mip_scip(req_mem_allocs)
-    res.sort(key=lambda r: r.mem_region.offset)
-    # print("res")
-    pprint([(r.lvr.begin, r.lvr.end) for r in res])
+    planned_allocs, zs = solve_mip_scip(req_mem_allocs)
+    planned_allocs.sort(key=lambda r: r.mem_region.offset)
+    # print([v for v in sorted(zs.values())])
+    # print([(r.lvr.begin, r.lvr.end) for r in planned_allocs])
+    make_memory_map(planned_allocs, "mip", save=False).show()
+
+    mip_high_water_mark = (
+        planned_allocs[-1].mem_region.offset + planned_allocs[-1].mem_region.size
+    )
+    print("whole", mip_high_water_mark)
+
+
+def test_lstm():
+    k = 2
+    lvrs = {
+        # (0, 3): 1024,
+        # (1, 3): 1024,
+        # (2, 4): 1024,
+        # (5, 10): 2 ** np.random.randint(1, 5),
+        # (6, 14): 2 ** np.random.randint(1, 5),
+        # (7, 10): 2 ** np.random.randint(1, 5),
+        # (8, 10): 2 ** np.random.randint(1, 5),
+        # (8, 12): 2 ** np.random.randint(1, 5),
+        # (9, 12): 2 ** np.random.randint(1, 5),
+        # (13, 14): 2 ** np.random.randint(1, 5),
+        (1, 7): 2 ** np.random.randint(1, 5),
+        (2, 7): 2 ** np.random.randint(1, 5),
+        (3, 7): 2 ** np.random.randint(1, 5),
+        (4, 7): 2 ** np.random.randint(1, 5),
+        (5, 7): 2 ** np.random.randint(1, 5),
+        (6, 7): 2 ** np.random.randint(1, 5),
+        (6, 15): 2 ** np.random.randint(1, 5),
+        (10, 15): 2 ** np.random.randint(1, 5),
+        (11, 15): 2 ** np.random.randint(1, 5),
+        (12, 15): 2 ** np.random.randint(1, 5),
+        (13, 15): 2 ** np.random.randint(1, 5),
+        # (1, 3): 2 ** np.random.randint(1, 5),
+        # (2, 4): 2 ** np.random.randint(1, 5),
+        # (3, 5): 2 ** np.random.randint(1, 5),
+        # (4, 6): 2 ** np.random.randint(1, 5),
+        # (5, 7): 2 ** np.random.randint(1, 5),
+        # (6, 8): 2 ** np.random.randint(1, 5),
+    }
+    # print("lvrs", lvrs)
+
+    schedule_whole(lvrs)
+    schedule_cliques(lvrs)
+
+    # print(mip_high_water_mark)
+    #
+    # planned_allocs = solve_csp(req_mem_allocs)
+    # planned_allocs.sort(key=lambda r: r.mem_region.offset)
+    # pprint([(r.lvr.begin, r.lvr.end) for r in planned_allocs])
+    # csp_high_water_mark = planned_allocs[-1].mem_region.offset + planned_allocs[-1].mem_region.size
+    # print(csp_high_water_mark)
 
 
 if __name__ == "__main__":
     for i in range(10):
         test_lstm()
-        # print("\n" + 10 * "*" + "\n")
+        print("\n" + 10 * "*" + "\n")
     # test_resnet18()
