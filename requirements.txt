@@ -21,7 +21,6 @@ numpy
 ncls
 z3-solver
 islpy
-islplot
 git+https://github.com/tobiasgrosser/islplot.git
 #sympy_plot_backends
 
