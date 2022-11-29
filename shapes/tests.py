@@ -227,6 +227,3 @@ def test_net_pip():
 if __name__ == "__main__":
     # test_resnet_ddp()
     test_net_pip()
-
-
-CppExtension

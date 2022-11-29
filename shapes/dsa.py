@@ -54,14 +54,14 @@ def build_dual_problem(offsets, Z, mems, rhss, domain_vars, symbol_vars):
         (
             A[2 * constr_idx, i],
             A[2 * constr_idx, j],
-        ) = (offsets[i], -2 * offsets[j])
+        ) = (offsets[i], -offsets[j])
         b[2 * constr_idx] = -rhss.get(mem_i, mem_i) + z * big_M
 
         # offset_j - offset_j <= -mem_j + (1 - z_ij) * M
         (
             A[2 * constr_idx + 1, j],
             A[2 * constr_idx + 1, i],
-        ) = (offsets[j], -2 * offsets[i])
+        ) = (offsets[j], -offsets[i])
         b[2 * constr_idx + 1] = -rhss.get(mem_j, mem_j) + (1 - z) * big_M
 
     # originally we were minimizing (hence just sum), but now we're maximizing (hence negative sum)
@@ -93,7 +93,10 @@ def build_dual_problem(offsets, Z, mems, rhss, domain_vars, symbol_vars):
         use_symbols=False,
     )
 
-    return tableau
+    # eliminate linearly dependent columns
+    _reduced, pivots = tableau[:-1, :num_constraints].echelon_form(with_pivots=True)
+    reduced_tableau = tableau[:, pivots].row_join(tableau[:, num_constraints:])
+    return reduced_tableau
 
 
 def build_dual_problems(

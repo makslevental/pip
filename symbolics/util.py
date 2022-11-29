@@ -96,6 +96,8 @@ def sympy_to_z3(sympy_var_list, sympy_exp):
 def check_constraints_feasible(constraints, sym_vars):
     s = Solver()
     z3_vars, result_exp1 = sympy_to_z3(sym_vars + (big_M,), constraints[0])
+    for var in z3_vars.values():
+        s.add(0 < var)
     big_M_constraint = sum([z for z_name, z in z3_vars.items() if z_name != big_M.name])
     s.add(big_M_constraint < z3_vars[big_M.name])
 
@@ -106,7 +108,7 @@ def check_constraints_feasible(constraints, sym_vars):
 
     start = time.monotonic()
     sat = s.check()
-    print("len cons", len(constraints), "check time", time.monotonic() - start)
+    # print("len cons", len(constraints), "check time", time.monotonic() - start)
     return sat.r == 1
 
 
