@@ -1,16 +1,41 @@
-from z3 import Int, solve
+from z3 import (
+    Int,
+    solve,
+    Function,
+    IntSort,
+    BoolSort,
+    Goal,
+    Tactic,
+    Solver,
+    RealSort,
+    Real,
+)
+import z3
 
-s = [Int(f's_{i}') for i in range(6)]
-print(s)
+x = Real("x")
+y = Real("y")
+z = Real("z")
+u = Real("u")
+v = Real("v")
+w = Real("w")
 
+P = Function("P", RealSort(), BoolSort())
 
-# to honor target
-
-cycle_time_constraints = [
-    s[2] - s[5] <= -1,
-    s[1] - s[5] <= -1,
+cons = [
+    x <= y + 2 * z,
+    x >= y - z,
+    x >= y - 3 - 3 * z,
+    x >= 5,
+    x <= u,
+    x >= v,
+    # P(u),
+    # P(v),
+    P(x),
 ]
 
-print(dependence_constraints)
+print(cons)
+g = Goal()
+g.add(*cons)
 
-# solve(x > 2, y < 10, x + 2*y == 7)
+g2 = Tactic("fm")(g)[0]
+print(g2)
